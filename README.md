@@ -41,9 +41,16 @@ async fn example() -> sqlx_turso::sqlx::Result<()> {
 - `fts`: forwards Turso FTS support
 - `sync`: local sync-backed connections and sync checkpoint/stat APIs
 
-## Checked Queries
+## Compile-Time Checked Queries
 
-Use `sqlx_turso::query!` with the `macros` feature. Offline metadata is stored in `.sqlx/query-*.json`.
+`sqlx-turso` provides SQLx-style compile-time checked query macros through the
+`sqlx_turso::query!` macro family when the `macros` feature is enabled. These
+are Turso-specific macros exported by this crate, not the stock `sqlx::query!`
+macros.
+
+```toml
+sqlx-turso = { version = "0.1", features = ["macros"] }
+```
 
 ```rust
 let row = sqlx_turso::query!("SELECT 1 AS \"id!: i64\"")
@@ -52,6 +59,20 @@ let row = sqlx_turso::query!("SELECT 1 AS \"id!: i64\"")
 assert_eq!(row.id, 1);
 ```
 
+Supported checked macro entry points:
+
+- `sqlx_turso::query!`
+- `sqlx_turso::query_as!`
+- `sqlx_turso::query_scalar!`
+- `sqlx_turso::query_file!`
+- `sqlx_turso::query_file_as!`
+- `sqlx_turso::query_file_scalar!`
+
+Output column typing is checked from describe metadata, and SQLx-style column
+overrides such as `"id!: i64"` are supported. Bind parameter checking is
+currently weak because Turso describe metadata does not report parameter types.
+
+Offline metadata is stored in `.sqlx/query-*.json`.
 Stock `cargo sqlx prepare` does not know the `turso:` URL scheme. Use the wrapper instead:
 
 ```sh
