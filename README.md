@@ -2,6 +2,8 @@
 
 `sqlx-turso` is a SQLx adapter for the Rust `turso` database engine. It exposes a distinct `Turso` SQLx database type, a small public facade crate, first-party checked query macros, migration support, pool aliases, and honest feature gates for Turso-specific behavior.
 
+> Work in progress: APIs and behavior may change before this crate is ready for production use.
+
 ## Crates
 
 - `sqlx-turso`: public facade and application-facing imports
