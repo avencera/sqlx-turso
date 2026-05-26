@@ -1,0 +1,10 @@
+error: expected exactly 1 column, got 2
+ --> tests/ui/fail/scalar_requires_one_column.rs:2:18
+  |
+2 |       let _query = sqlx_turso::query_scalar!(
+  |  __________________^
+3 | |         "SELECT 1 AS \"id!: i64\", 'alice' AS \"name!\""
+4 | |     );
+  | |_____^
+  |
+  = note: this error originates in the macro `sqlx_turso::query_scalar` (in Nightly builds, run with -Z macro-backtrace for more info)

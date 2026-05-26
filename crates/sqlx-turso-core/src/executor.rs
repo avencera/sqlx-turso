@@ -430,6 +430,7 @@ mod tests {
         executor::Executor,
         row::Row,
         sql_str::SqlStr,
+        statement::Statement,
         value::ValueRef,
     };
 
@@ -606,6 +607,43 @@ mod tests {
         assert_eq!(row.try_get::<String, _>("label")?, "alice");
         assert_eq!(row.try_get::<Vec<u8>, _>("payload")?, [9, 8, 7]);
         assert_eq!(row.try_get::<f64, _>("score")?, 4.25);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn describe_leaves_parameter_metadata_unknown() -> sqlx_core::Result<()> {
+        let mut connection = TursoConnectOptions::new().connect().await?;
+
+        let describe = (&mut connection)
+            .describe(SqlStr::from_static("SELECT ? AS value"))
+            .await?;
+
+        assert!(describe.parameters().is_none());
+        assert_eq!(describe.columns().len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn row_and_statement_name_lookup_use_same_metadata() -> sqlx_core::Result<()> {
+        let mut connection = TursoConnectOptions::new().connect().await?;
+
+        (&mut connection)
+            .execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            .await?;
+        (&mut connection)
+            .execute("INSERT INTO test (id, name) VALUES (1, 'alice')")
+            .await?;
+
+        let sql = SqlStr::from_static("SELECT id, name FROM test WHERE id = 1");
+        let statement = (&mut connection).prepare(sql.clone()).await?;
+        assert_eq!(statement.column("name").ordinal(), 1);
+        assert!(statement.try_column("missing").is_err());
+
+        let row = (&mut connection).fetch_one(sql).await?;
+        assert_eq!(row.try_get::<String, _>("name")?, "alice");
+        assert!(row.try_get_raw("missing").is_err());
 
         Ok(())
     }

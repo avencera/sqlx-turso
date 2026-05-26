@@ -49,7 +49,7 @@ jobs:
         run: cargo clippy --workspace --locked --all-targets --all-features -- -D warnings
 
   test:
-    name: Test (${{ matrix.toolchain }})
+    name: Test (${{ matrix.toolchain }}, ${{ matrix.features.name }})
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: -D warnings
@@ -59,6 +59,11 @@ jobs:
         toolchain:
           - stable
           - 1.94.0
+        features:
+          - name: default
+            args: ""
+          - name: all-features
+            args: "--all-features"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -75,4 +80,81 @@ jobs:
           prefix-key: v1-rust
 
       - name: Run tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked ${{ matrix.features.args }}
+
+  feature-check:
+    name: Feature Check (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -D warnings
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: no-default-features
+            args: -p sqlx-turso --no-default-features
+          - name: runtime-tokio
+            args: -p sqlx-turso --features runtime-tokio
+          - name: any
+            args: -p sqlx-turso --features any
+          - name: migrate
+            args: -p sqlx-turso --features migrate
+          - name: macros
+            args: -p sqlx-turso --features macros
+          - name: offline
+            args: -p sqlx-turso --features offline
+          - name: value-integrations
+            args: -p sqlx-turso --features chrono,time,uuid,json
+          - name: fts
+            args: -p sqlx-turso --features fts
+          - name: sync
+            args: -p sqlx-turso --features sync
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust
+
+      - name: Check feature set
+        run: cargo check --locked ${{ matrix.args }}
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          prefix-key: v1-rust
+
+      - name: Build docs
+        run: cargo doc --workspace --locked --all-features --no-deps
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Package workspace
+        run: cargo package --workspace --locked

@@ -30,6 +30,7 @@ sqlx-turso-macros = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+trybuild.workspace = true
 
 [[example]]
 name = "checked_queries"
@@ -49,4 +50,8 @@ required-features = ["macros"]
 
 [[test]]
 name = "online_macros"
+required-features = ["macros"]
+
+[[test]]
+name = "ui"
 required-features = ["macros"]

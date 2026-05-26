@@ -109,7 +109,7 @@ fn expand_query(input: TokenStream2) -> TokenStream {
         Ok(tokens) => rewrite_sqlx_paths(tokens, &facade_path).into(),
         Err(error) => {
             let message = error.to_string();
-            quote!(compile_error!(#message);).into()
+            quote!(compile_error!(#message)).into()
         }
     }
 }

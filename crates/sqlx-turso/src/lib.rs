@@ -53,7 +53,7 @@ pub use sqlx_turso_core::{Migrate, MigrateDatabase, Migration, MigrationType};
 pub use sqlx;
 
 #[cfg(feature = "any")]
-pub use sqlx_turso_core::{TURSO_ANY_DRIVER, install_any_driver};
+pub use sqlx_turso_core::{TURSO_ANY_DRIVER, install_turso_any_driver};
 
 #[cfg(feature = "macros")]
 pub use sqlx_turso_macros::{

@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::OnceLock};
 
 use either::Either;
 use futures_core::{future::BoxFuture, stream::BoxStream};
@@ -25,7 +25,10 @@ use crate::{
     TursoRow, TursoStatement, TursoTypeInfo,
 };
 
+/// SQLx `Any` driver descriptor for Turso
 pub const TURSO_ANY_DRIVER: AnyDriver = any_driver();
+
+static TURSO_ANY_DRIVER_INSTALL: OnceLock<Result<(), String>> = OnceLock::new();
 
 #[cfg(feature = "migrate")]
 const fn any_driver() -> AnyDriver {
@@ -37,9 +40,22 @@ const fn any_driver() -> AnyDriver {
     AnyDriver::without_migrate::<Turso>()
 }
 
-/// Registers Turso as the only SQLx `Any` driver
-pub fn install_any_driver() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-    install_drivers(&[TURSO_ANY_DRIVER])
+/// Installs Turso as the only SQLx `Any` driver
+pub fn install_turso_any_driver() -> sqlx_core::Result<()> {
+    let result = TURSO_ANY_DRIVER_INSTALL
+        .get_or_init(|| install_drivers(&[TURSO_ANY_DRIVER]).map_err(|error| error.to_string()));
+
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => Err(Error::Configuration(
+            format!(
+                "failed to install Turso as the SQLx Any driver: {error}; \
+             install mixed Any drivers once with `sqlx::any::install_drivers()` and \
+             `sqlx_turso::TURSO_ANY_DRIVER`"
+            )
+            .into(),
+        )),
+    }
 }
 
 impl TryFrom<&AnyConnectOptions> for TursoConnectOptions {
@@ -255,16 +271,19 @@ mod tests {
     use std::{path::Path, process, str::FromStr};
 
     use sqlx_core::{
-        any::AnyConnectOptions, connection::ConnectOptions, executor::Executor, row::Row,
+        any::{AnyConnectOptions, AnyPoolOptions},
+        connection::{ConnectOptions, Connection},
+        executor::Executor,
+        row::Row,
     };
 
-    use crate::install_any_driver;
+    use crate::install_turso_any_driver;
 
     #[tokio::test]
     async fn any_connection_executes_queries() -> sqlx_core::Result<()> {
         let path = std::env::temp_dir().join(format!("sqlx-turso-any-{}.db", process::id()));
         remove_database_files(&path);
-        let _ = install_any_driver();
+        install_turso_any_driver()?;
 
         let url = format!("turso://{}?mode=rwc", path.display());
         let mut connection = AnyConnectOptions::from_str(&url)?.connect().await?;
@@ -281,6 +300,101 @@ mod tests {
             .fetch_one("SELECT name FROM test WHERE id = 1")
             .await?;
         assert_eq!(row.try_get::<String, _>("name")?, "alice");
+
+        remove_database_files(&path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn any_driver_install_is_idempotent() -> sqlx_core::Result<()> {
+        install_turso_any_driver()?;
+        install_turso_any_driver()?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn any_pool_executes_and_recovers_after_error() -> sqlx_core::Result<()> {
+        let path = std::env::temp_dir().join(format!("sqlx-turso-any-pool-{}.db", process::id()));
+        remove_database_files(&path);
+        install_turso_any_driver()?;
+
+        let url = format!("turso://{}?mode=rwc", path.display());
+        let pool = AnyPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await?;
+
+        pool.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)")
+            .await?;
+
+        let error = pool
+            .execute("INSERT INTO missing_table (id) VALUES (1)")
+            .await
+            .expect_err("missing table insert should fail");
+        assert!(error.as_database_error().is_some());
+
+        pool.execute("INSERT INTO test (id) VALUES (1)").await?;
+        let row = pool.fetch_one("SELECT COUNT(*) AS count FROM test").await?;
+        assert_eq!(row.try_get::<i64, _>("count")?, 1);
+
+        pool.close().await;
+        remove_database_files(&path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn any_transaction_commits_and_rolls_back() -> sqlx_core::Result<()> {
+        let path = std::env::temp_dir().join(format!("sqlx-turso-any-tx-{}.db", process::id()));
+        remove_database_files(&path);
+        install_turso_any_driver()?;
+
+        let url = format!("turso://{}?mode=rwc", path.display());
+        let mut connection = AnyConnectOptions::from_str(&url)?.connect().await?;
+
+        (&mut connection)
+            .execute("CREATE TABLE test (id INTEGER PRIMARY KEY)")
+            .await?;
+
+        let mut transaction = connection.begin().await?;
+        (&mut *transaction)
+            .execute("INSERT INTO test (id) VALUES (1)")
+            .await?;
+        transaction.commit().await?;
+
+        let mut transaction = connection.begin().await?;
+        (&mut *transaction)
+            .execute("INSERT INTO test (id) VALUES (2)")
+            .await?;
+        transaction.rollback().await?;
+
+        let row = (&mut connection)
+            .fetch_one("SELECT COUNT(*) AS count FROM test")
+            .await?;
+        assert_eq!(row.try_get::<i64, _>("count")?, 1);
+
+        remove_database_files(&path);
+        Ok(())
+    }
+
+    #[cfg(feature = "migrate")]
+    #[tokio::test]
+    async fn any_migrate_database_creates_and_drops_files() -> sqlx_core::Result<()> {
+        use sqlx_core::migrate::MigrateDatabase;
+
+        let path =
+            std::env::temp_dir().join(format!("sqlx-turso-any-migrate-{}.db", process::id()));
+        remove_database_files(&path);
+        install_turso_any_driver()?;
+
+        let url = format!("turso://{}?mode=rwc", path.display());
+        assert!(!sqlx_core::any::Any::database_exists(&url).await?);
+
+        sqlx_core::any::Any::create_database(&url).await?;
+        assert!(sqlx_core::any::Any::database_exists(&url).await?);
+
+        sqlx_core::any::Any::drop_database(&url).await?;
+        assert!(!sqlx_core::any::Any::database_exists(&url).await?);
 
         remove_database_files(&path);
         Ok(())

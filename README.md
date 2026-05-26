@@ -2,7 +2,10 @@
 
 `sqlx-turso` is a SQLx adapter for the Rust `turso` database engine. It exposes a distinct `Turso` SQLx database type, a small public facade crate, first-party checked query macros, migration support, pool aliases, and honest feature gates for Turso-specific behavior.
 
-> Work in progress: APIs and behavior may change before this crate is ready for production use.
+This is a pre-release Turso-backed SQLx driver, not a drop-in replacement for
+`sqlx-sqlite`. The supported and limited surfaces are documented below so
+applications can decide whether the current crate is appropriate for production
+use.
 
 ## Crates
 
@@ -41,6 +44,21 @@ async fn example() -> sqlx_turso::sqlx::Result<()> {
 - `fts`: forwards Turso FTS support
 - `sync`: local sync-backed connections and sync checkpoint/stat APIs
 
+## SQLx Any
+
+Enable the `any` feature and install the Turso driver before opening
+`sqlx::Any` connections:
+
+```rust
+sqlx_turso::install_turso_any_driver()?;
+```
+
+`install_turso_any_driver()` installs Turso as the only SQLx `Any` driver and
+is safe to call repeatedly through that helper. Applications that need Turso
+alongside other `Any` drivers must call `sqlx::any::install_drivers()` once with
+`sqlx_turso::TURSO_ANY_DRIVER` plus the other driver constants; SQLx's global
+`Any` registry cannot be changed after a different installer has run.
+
 ## Compile-Time Checked Queries
 
 `sqlx-turso` provides SQLx-style compile-time checked query macros through the
@@ -69,8 +87,8 @@ Supported checked macro entry points:
 - `sqlx_turso::query_file_scalar!`
 
 Output column typing is checked from describe metadata, and SQLx-style column
-overrides such as `"id!: i64"` are supported. Bind parameter checking is
-currently weak because Turso describe metadata does not report parameter types.
+overrides such as `"id!: i64"` are supported. Bind parameter checking is weak
+because Turso describe metadata does not expose public parameter metadata.
 
 Offline metadata is stored in `.sqlx/query-*.json`.
 Stock `cargo sqlx prepare` does not know the `turso:` URL scheme. Use the wrapper instead:
@@ -79,8 +97,23 @@ Stock `cargo sqlx prepare` does not know the `turso:` URL scheme. Use the wrappe
 sqlx-turso prepare --database-url turso:///path/to/app.db -- -p your-crate --features macros
 ```
 
-## Current Limitations
+## Status
 
+Supported today:
+
+- local file and in-memory connections
+- SQLx executor, row, value, statement, pool, and transaction APIs
+- nested transactions through savepoints
+- local migrations and database lifecycle helpers
+- checked query output typing and offline metadata
+- optional `chrono`, `time`, `uuid`, and `json` value integrations
+- forwarded Turso FTS support
+- local sync-backed execution, checkpoint, and stats APIs
+
+Current limitations:
+
+- this crate pins `turso = "=0.7.0-pre.3"`
+- bind parameter checking is weak until Turso exposes public parameter metadata
 - read-only and immutable opens are rejected until Turso exposes matching builder options
 - only virtual generated columns are covered; stored generated columns are not supported
 - autovacuum is disabled because Turso exposes `VACUUM` but not the autovacuum builder flag

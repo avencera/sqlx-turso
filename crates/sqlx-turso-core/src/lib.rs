@@ -32,7 +32,7 @@ mod type_info;
 mod value;
 
 #[cfg(feature = "any")]
-pub use any::{TURSO_ANY_DRIVER, install_any_driver};
+pub use any::{TURSO_ANY_DRIVER, install_turso_any_driver};
 pub use arguments::TursoArguments;
 pub use column::TursoColumn;
 pub use connection::TursoConnection;
