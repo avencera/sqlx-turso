@@ -1,0 +1,22 @@
+{
+  "db_name": "Turso",
+  "query": "SELECT 1 AS \"id!: i64\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: i64",
+        "type_info": {
+          "name": "NULL"
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e0b12174b41649fe543989ac80cb64f25d41fa5ae4fe7be6992b5d3c0e8aae58"
+}

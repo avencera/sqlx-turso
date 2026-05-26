@@ -1,0 +1,30 @@
+{
+  "db_name": "Turso",
+  "query": "SELECT id AS \"id!: i64\", name AS \"name!\" FROM macro_users WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!: i64",
+        "type_info": {
+          "name": "INTEGER"
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "name!",
+        "type_info": {
+          "name": "TEXT"
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "2341686090bb16bc6842e0d821a502003cc14bfd54b09f2e2e832249c6b9765e"
+}
