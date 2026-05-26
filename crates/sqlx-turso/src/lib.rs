@@ -37,6 +37,8 @@
 //! Unsupported SQLite/Turso surfaces are documented in the repository README and remain disabled
 //! unless the pinned SQLx and Turso APIs expose enough behavior to test them honestly
 
+#![warn(missing_docs)]
+
 extern crate self as sqlx_turso;
 
 pub use sqlx_turso_core::{

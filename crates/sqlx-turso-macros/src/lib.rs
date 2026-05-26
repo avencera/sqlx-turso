@@ -1,5 +1,7 @@
 //! Checked query macros for sqlx-turso
 
+#![warn(missing_docs)]
+
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Group, Span, TokenStream as TokenStream2, TokenTree};
