@@ -1,6 +1,38 @@
-[package]
-name = "sqlx-turso"
+[workspace]
+members = [
+    "crates/sqlx-turso",
+    "crates/sqlx-turso-cli",
+    "crates/sqlx-turso-core",
+    "crates/sqlx-turso-macros",
+]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
 
-[dependencies]
+[workspace.dependencies]
+sqlx = { version = "=0.9.0", default-features = false }
+sqlx-core = { version = "=0.9.0", default-features = false }
+sqlx-macros-core = { version = "=0.9.0", default-features = false }
+turso = { version = "=0.7.0-pre.3", default-features = false }
+chrono = "0.4.44"
+either = "1.16.0"
+futures-core = "0.3.32"
+futures-util = "0.3.32"
+log = "0.4.30"
+percent-encoding = "2.3.2"
+proc-macro2 = "1.0.103"
+quote = "1.0.42"
+serde = "1.0.228"
+serde_json = "1.0.150"
+syn = { version = "2.0.111", features = ["full", "parsing"] }
+time = { version = "0.3.47", features = ["formatting", "macros", "parsing"] }
+tokio = { version = "1.52.3", default-features = false, features = ["sync"] }
+url = "2.5.8"
+uuid = "1.23.1"
+
+sqlx-turso-core = { path = "crates/sqlx-turso-core", version = "0.1.0" }
+sqlx-turso-macros = { path = "crates/sqlx-turso-macros", version = "0.1.0" }

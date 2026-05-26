@@ -1,0 +1,44 @@
+[package]
+name = "sqlx-turso"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SQLx adapter for the Rust Turso database engine"
+readme = "../../README.md"
+keywords = ["sqlx", "turso", "sqlite", "database"]
+categories = ["database"]
+
+[features]
+default = ["runtime-tokio"]
+runtime-tokio = ["sqlx-turso-core/runtime-tokio"]
+macros = ["dep:sqlx-turso-macros", "sqlx-turso-core/macros"]
+any = ["sqlx-turso-core/any"]
+sync = ["sqlx-turso-core/sync"]
+fts = ["sqlx-turso-core/fts"]
+migrate = ["sqlx-turso-core/migrate"]
+offline = ["sqlx-turso-core/offline"]
+chrono = ["sqlx-turso-core/chrono"]
+json = ["sqlx-turso-core/json"]
+time = ["sqlx-turso-core/time"]
+uuid = ["sqlx-turso-core/uuid"]
+
+[dependencies]
+sqlx.workspace = true
+sqlx-turso-core.workspace = true
+sqlx-turso-macros = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[[example]]
+name = "checked_queries"
+required-features = ["macros"]
+
+[[example]]
+name = "migrations"
+required-features = ["migrate"]
+
+[[example]]
+name = "sync"
+required-features = ["sync"]

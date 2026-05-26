@@ -1,0 +1,20 @@
+[package]
+name = "sqlx-turso-macros"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Checked query macros for sqlx-turso"
+readme = "../../README.md"
+keywords = ["sqlx", "turso", "macros"]
+categories = ["database"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+sqlx-macros-core = { workspace = true, features = ["macros", "_rt-tokio", "sqlx-toml"] }
+sqlx-turso-core = { workspace = true, features = ["macros"] }
+syn.workspace = true
