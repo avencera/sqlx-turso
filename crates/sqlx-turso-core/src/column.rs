@@ -1,4 +1,6 @@
-use sqlx_core::{column::Column, impl_column_index_for_statement};
+use std::sync::Arc;
+
+use sqlx_core::{HashMap, column::Column, ext::ustr::UStr, impl_column_index_for_statement};
 
 use crate::{Turso, TursoTypeInfo};
 
@@ -45,6 +47,16 @@ impl Column for TursoColumn {
     fn type_info(&self) -> &TursoTypeInfo {
         &self.type_info
     }
+}
+
+pub(crate) fn collect_column_names(columns: &[TursoColumn]) -> Arc<HashMap<UStr, usize>> {
+    let mut column_names = HashMap::with_capacity(columns.len());
+
+    for column in columns {
+        column_names.insert(UStr::new(column.name()), column.ordinal());
+    }
+
+    Arc::new(column_names)
 }
 
 impl_column_index_for_statement!(TursoStatement);

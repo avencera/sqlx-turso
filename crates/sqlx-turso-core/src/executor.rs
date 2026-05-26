@@ -4,20 +4,22 @@ use either::Either;
 use futures_core::{future::BoxFuture, stream::BoxStream};
 use futures_util::{FutureExt, StreamExt, TryStreamExt, stream};
 use sqlx_core::{
+    HashMap,
     column::Column,
     error::Error,
     executor::{Execute, Executor},
+    ext::ustr::UStr,
     sql_str::SqlStr,
     statement::Statement,
 };
 
 use crate::{
     Turso, TursoArguments, TursoColumn, TursoConnection, TursoQueryResult, TursoRow,
-    TursoStatement, TursoValue, error::unsupported_sqlx,
+    TursoStatement, TursoValue, column::collect_column_names, error::unsupported_sqlx,
 };
 
 impl TursoConnection {
-    async fn fetch_many_sql(
+    pub(crate) async fn fetch_many_sql(
         &mut self,
         sql: SqlStr,
         persistent: bool,
@@ -45,6 +47,7 @@ impl TursoConnection {
 
         let mut statement = self.prepare_query_statement(sql, persistent).await?;
         let columns: Arc<[TursoColumn]> = turso_columns(statement.columns()).into();
+        let column_names = collect_column_names(&columns);
         let rows = match arguments {
             Some(arguments) => statement
                 .query(arguments.into_turso_values())
@@ -58,6 +61,7 @@ impl TursoConnection {
                 rows,
                 statement,
                 columns,
+                column_names,
                 pending_row: None,
             },
             FetchState::next,
@@ -116,6 +120,7 @@ enum FetchState {
         rows: turso::Rows,
         statement: turso::Statement,
         columns: Arc<[TursoColumn]>,
+        column_names: Arc<HashMap<UStr, usize>>,
         pending_row: Option<turso::Row>,
     },
     QueryResult(TursoQueryResult),
@@ -132,6 +137,7 @@ impl FetchState {
             mut rows,
             statement,
             columns,
+            column_names,
             pending_row,
         } = self
         else {
@@ -165,6 +171,7 @@ impl FetchState {
                 rows,
                 statement,
                 columns: columns.clone(),
+                column_names: column_names.clone(),
                 pending_row,
             }
         } else {
@@ -172,7 +179,11 @@ impl FetchState {
         };
 
         Ok(Some((
-            Either::Right(TursoRow::with_shared_columns(columns.clone(), values)),
+            Either::Right(TursoRow::with_shared_columns(
+                columns.clone(),
+                column_names.clone(),
+                values,
+            )),
             next_state,
         )))
     }

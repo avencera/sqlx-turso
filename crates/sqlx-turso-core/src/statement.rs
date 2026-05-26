@@ -1,30 +1,38 @@
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use either::Either;
 use sqlx_core::{
+    HashMap,
+    column::ColumnIndex,
+    ext::ustr::UStr,
     impl_statement_query,
     sql_str::{AssertSqlSafe, SqlSafeStr, SqlStr},
     statement::Statement,
 };
 
-use crate::{Turso, TursoArguments, TursoColumn, TursoTypeInfo};
+use crate::{Turso, TursoArguments, TursoColumn, TursoTypeInfo, column::collect_column_names};
 
 /// Prepared Turso statement metadata
 #[derive(Clone)]
 pub struct TursoStatement {
     sql: SqlStr,
     parameters: Option<usize>,
-    columns: Vec<TursoColumn>,
+    columns: Arc<[TursoColumn]>,
+    column_names: Arc<HashMap<UStr, usize>>,
     raw: Option<turso::Statement>,
 }
 
 impl TursoStatement {
     /// Creates statement metadata for a SQL string
     pub fn new(sql: impl Into<String>) -> Self {
+        let columns: Arc<[TursoColumn]> = Vec::new().into();
+        let column_names = collect_column_names(&columns);
+
         Self {
             sql: AssertSqlSafe(sql.into()).into_sql_str(),
             parameters: None,
-            columns: Vec::new(),
+            columns,
+            column_names,
             raw: None,
         }
     }
@@ -34,16 +42,25 @@ impl TursoStatement {
         columns: Vec<TursoColumn>,
         raw: turso::Statement,
     ) -> Self {
+        let columns: Arc<[TursoColumn]> = columns.into();
+        let column_names = collect_column_names(&columns);
+
         Self {
             sql: AssertSqlSafe(sql.into()).into_sql_str(),
             parameters: None,
             columns,
+            column_names,
             raw: Some(raw),
         }
     }
 
     pub(crate) fn raw(&self) -> Option<turso::Statement> {
         self.raw.clone()
+    }
+
+    #[cfg(feature = "any")]
+    pub(crate) fn column_names(&self) -> Arc<HashMap<UStr, usize>> {
+        self.column_names.clone()
     }
 }
 
@@ -79,12 +96,12 @@ impl Statement for TursoStatement {
     impl_statement_query!(TursoArguments);
 }
 
-impl sqlx_core::column::ColumnIndex<TursoStatement> for str {
+impl ColumnIndex<TursoStatement> for str {
     fn index(&self, statement: &TursoStatement) -> Result<usize, sqlx_core::error::Error> {
         statement
-            .columns()
-            .iter()
-            .position(|column| sqlx_core::column::Column::name(column) == self)
+            .column_names
+            .get(self)
+            .copied()
             .ok_or_else(|| sqlx_core::error::Error::ColumnNotFound(self.to_owned()))
     }
 }

@@ -1,8 +1,8 @@
-use std::{str::FromStr, sync::Arc};
+use std::str::FromStr;
 
 use either::Either;
 use futures_core::{future::BoxFuture, stream::BoxStream};
-use futures_util::{FutureExt, StreamExt, TryStreamExt};
+use futures_util::{FutureExt, StreamExt, TryStreamExt, stream};
 use sqlx_core::{
     any::{
         Any, AnyArguments, AnyColumn, AnyConnectOptions, AnyConnectionBackend, AnyQueryResult,
@@ -15,10 +15,7 @@ use sqlx_core::{
     error::Error,
     executor::Executor,
     ext::ustr::UStr,
-    query::query_with_result,
-    row::Row,
     sql_str::SqlStr,
-    statement::Statement,
     transaction::TransactionManager,
     type_info::TypeInfo,
 };
@@ -123,12 +120,17 @@ impl AnyConnectionBackend for TursoConnection {
         persistent: bool,
         arguments: Option<AnyArguments>,
     ) -> BoxStream<'_, sqlx_core::Result<Either<AnyQueryResult, AnyRow>>> {
-        let arguments = arguments
+        let arguments = match arguments
             .map(AnyArguments::convert_into::<TursoArguments>)
-            .unwrap_or_else(|| Ok(TursoArguments::default()));
-        let query = query_with_result::<Turso, _>(query, arguments).persistent(persistent);
+            .transpose()
+            .map_err(Error::Encode)
+        {
+            Ok(arguments) => arguments,
+            Err(error) => return stream::once(async move { Err(error) }).boxed(),
+        };
 
-        Executor::fetch_many(self, query)
+        stream::once(async move { self.fetch_many_sql(query, persistent, arguments).await })
+            .try_flatten()
             .and_then(|item| async move {
                 match item {
                     Either::Left(result) => Ok(Either::Left(AnyQueryResult::from(result))),
@@ -146,14 +148,19 @@ impl AnyConnectionBackend for TursoConnection {
     ) -> BoxFuture<'_, sqlx_core::Result<Option<AnyRow>>> {
         let arguments = arguments
             .map(AnyArguments::convert_into::<TursoArguments>)
-            .unwrap_or_else(|| Ok(TursoArguments::default()));
-        let query = query_with_result::<Turso, _>(query, arguments).persistent(persistent);
+            .transpose()
+            .map_err(Error::Encode);
 
         async move {
-            Executor::fetch_optional(self, query)
-                .await?
-                .map(AnyRow::try_from)
-                .transpose()
+            let mut stream = self.fetch_many_sql(query, persistent, arguments?).await?;
+
+            while let Some(result) = stream.try_next().await? {
+                if let Either::Right(row) = result {
+                    return AnyRow::try_from(row).map(Some);
+                }
+            }
+
+            Ok(None)
         }
         .boxed()
     }
@@ -182,7 +189,7 @@ impl TryFrom<TursoRow> for AnyRow {
     type Error = Error;
 
     fn try_from(row: TursoRow) -> Result<Self, Self::Error> {
-        let column_names = any_column_names(row.columns());
+        let column_names = row.column_names();
         AnyRow::map_from(&row, column_names)
     }
 }
@@ -191,7 +198,7 @@ impl TryFrom<TursoStatement> for AnyStatement {
     type Error = Error;
 
     fn try_from(statement: TursoStatement) -> Result<Self, Self::Error> {
-        let column_names = any_column_names(statement.columns());
+        let column_names = statement.column_names();
         AnyStatement::try_from_statement(statement, column_names)
     }
 }
@@ -225,14 +232,6 @@ impl From<TursoQueryResult> for AnyQueryResult {
             last_insert_id: None,
         }
     }
-}
-
-fn any_column_names(columns: &[TursoColumn]) -> Arc<sqlx_core::HashMap<UStr, usize>> {
-    columns
-        .iter()
-        .map(|column| (UStr::new(column.name()), column.ordinal()))
-        .collect::<sqlx_core::HashMap<_, _>>()
-        .into()
 }
 
 fn any_type_info_kind(type_info: &TursoTypeInfo) -> AnyTypeInfoKind {
