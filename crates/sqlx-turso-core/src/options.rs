@@ -25,7 +25,12 @@ static IN_MEMORY_DB_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// Target database location for Turso connections
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TursoDatabaseTarget {
-    Memory { name: Arc<str> },
+    /// In-memory database identified by a shared cache name
+    Memory {
+        /// Shared cache name for the in-memory database
+        name: Arc<str>,
+    },
+    /// File-backed database stored at the given path
     File(PathBuf),
 }
 
@@ -71,13 +76,21 @@ impl std::fmt::Debug for TursoIo {
 /// Experimental Turso builder features
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TursoExperimentalFeature {
+    /// Enables support for attaching additional databases
     Attach,
+    /// Enables support for custom column types
     CustomTypes,
+    /// Enables support for generated columns
     GeneratedColumns,
+    /// Enables support for custom index methods
     IndexMethod,
+    /// Enables support for materialized views
     MaterializedViews,
+    /// Enables support for multiprocess WAL mode
     MultiprocessWal,
+    /// Enables support for the VACUUM statement
     Vacuum,
+    /// Enables support for WITHOUT ROWID tables
     WithoutRowid,
 }
 

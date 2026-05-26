@@ -5,6 +5,8 @@
 //! support, and macro metadata hooks. Most applications should depend on the `sqlx-turso`
 //! facade instead of this crate directly.
 
+#![warn(missing_docs)]
+
 #[cfg(feature = "any")]
 mod any;
 mod arguments;
