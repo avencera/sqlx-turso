@@ -13,19 +13,60 @@ pub struct TursoConnection {
     #[cfg(feature = "sync")]
     sync: Option<turso::sync::Database>,
     statements: StatementCache<TursoStatement>,
-    transaction_depth: usize,
-    pending_rollback_depths: VecDeque<usize>,
-    rollback_failed: bool,
+    transaction_state: TransactionState,
 }
 
 impl fmt::Debug for TursoConnection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TursoConnection")
             .field("options", &self.options)
-            .field("transaction_depth", &self.transaction_depth)
-            .field("pending_rollback_depths", &self.pending_rollback_depths)
-            .field("rollback_failed", &self.rollback_failed)
+            .field("transaction_state", &self.transaction_state)
             .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Default)]
+struct TransactionState {
+    depth: usize,
+    pending_rollback_depths: VecDeque<usize>,
+    rollback_failed: bool,
+}
+
+impl TransactionState {
+    fn depth(&self) -> usize {
+        self.depth
+    }
+
+    fn increment_depth(&mut self) {
+        self.depth += 1;
+    }
+
+    fn decrement_depth(&mut self) {
+        if self.depth > 0 {
+            self.depth -= 1;
+        }
+    }
+
+    fn mark_rollback_needed(&mut self) {
+        if self.depth == 0 {
+            return;
+        }
+
+        self.pending_rollback_depths.push_back(self.depth);
+        self.decrement_depth();
+    }
+
+    fn pop_pending_rollback(&mut self) -> Option<usize> {
+        self.pending_rollback_depths.pop_front()
+    }
+
+    fn has_failed_rollback(&self) -> bool {
+        self.rollback_failed
+    }
+
+    fn mark_rollback_failed(&mut self) {
+        self.rollback_failed = true;
+        self.pending_rollback_depths.clear();
     }
 }
 
@@ -37,46 +78,39 @@ impl TursoConnection {
             raw: connection.raw,
             #[cfg(feature = "sync")]
             sync: connection.sync,
-            transaction_depth: 0,
-            pending_rollback_depths: VecDeque::new(),
-            rollback_failed: false,
+            transaction_state: TransactionState::default(),
         }
     }
 
     pub(crate) fn transaction_depth(&self) -> usize {
-        self.transaction_depth
+        self.transaction_state.depth()
     }
 
     pub(crate) fn increment_transaction_depth(&mut self) {
-        self.transaction_depth += 1;
+        self.transaction_state.increment_depth();
     }
 
     pub(crate) fn decrement_transaction_depth(&mut self) {
-        self.transaction_depth = self.transaction_depth.saturating_sub(1);
+        self.transaction_state.decrement_depth();
     }
 
     pub(crate) fn mark_rollback_needed(&mut self) {
-        if self.transaction_depth > 0 {
-            self.pending_rollback_depths
-                .push_back(self.transaction_depth);
-            self.decrement_transaction_depth();
-        }
+        self.transaction_state.mark_rollback_needed();
     }
 
     pub(crate) async fn clear_pending_rollback(&mut self) -> Result<(), Error> {
-        if self.rollback_failed {
+        if self.transaction_state.has_failed_rollback() {
             return Err(Error::WorkerCrashed);
         }
 
-        while let Some(depth) = self.pending_rollback_depths.pop_front() {
+        while let Some(depth) = self.transaction_state.pop_pending_rollback() {
             let sql = sqlx_core::transaction::rollback_ansi_transaction_sql(depth);
             if let Err(error) = self.raw().execute(sql.as_str(), ()).await {
                 if depth == 1 && rollback_error_is_inactive_transaction(&error) {
                     continue;
                 }
 
-                self.rollback_failed = true;
-                self.pending_rollback_depths.clear();
+                self.transaction_state.mark_rollback_failed();
                 return Err(crate::executor::map_turso_error(error));
             }
         }

@@ -5,12 +5,16 @@ use sqlx_turso::{
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> sqlx_turso::sqlx::Result<()> {
+    let path =
+        std::env::temp_dir().join(format!("sqlx-turso-sync-example-{}.db", std::process::id()));
+
     let sync = TursoSyncOptions::new("http://127.0.0.1:1")
         .with_client_name("sqlx-turso-example")
         .with_bootstrap_if_empty(false);
 
     let mut conn = TursoConnectOptions::new()
-        .filename("/tmp/sqlx-turso-sync-example.db")
+        .filename(path)
+        .create_if_missing(true)
         .with_sync_options(sync)
         .connect()
         .await?;

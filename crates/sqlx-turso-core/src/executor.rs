@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use either::Either;
 use futures_core::{future::BoxFuture, stream::BoxStream};
 use futures_util::{FutureExt, StreamExt, TryStreamExt, stream};
@@ -20,64 +22,47 @@ impl TursoConnection {
         sql: SqlStr,
         persistent: bool,
         arguments: Option<TursoArguments>,
-    ) -> Result<Vec<Either<TursoQueryResult, TursoRow>>, Error> {
+    ) -> Result<BoxStream<'static, Result<Either<TursoQueryResult, TursoRow>, Error>>, Error> {
         self.clear_pending_rollback().await?;
 
-        if may_contain_multiple_statements(sql.as_str()) {
+        let inspection = inspect_sql(sql.as_str());
+        if inspection.may_contain_multiple_statements {
             if arguments.is_some() {
                 return Err(unsupported_sqlx("Turso SQLx batch query arguments"));
             }
 
-            return self.execute_batch_sql(sql.as_str()).await;
+            let items = self.execute_batch_sql(sql.as_str()).await?;
+            return Ok(stream::iter(items.into_iter().map(Ok)).boxed());
         }
 
         if arguments.is_some()
-            && let Some(placeholder) = unsupported_named_placeholder(sql.as_str())
+            && let Some(placeholder) = inspection.unsupported_named_placeholder
         {
             return Err(unsupported_sqlx(format!(
                 "Turso SQLx non-integer named placeholder `{placeholder}`"
             )));
         }
 
-        let mut statement = if persistent {
-            match self.prepare_sql(sql.clone()).await?.raw() {
-                Some(statement) => statement,
-                None => self
-                    .raw()
-                    .prepare(sql.as_str())
-                    .await
-                    .map_err(map_turso_error)?,
-            }
-        } else {
-            self.raw()
-                .prepare(sql.as_str())
-                .await
-                .map_err(map_turso_error)?
-        };
-        let columns = turso_columns(statement.columns());
-        let mut rows = match arguments {
+        let mut statement = self.prepare_query_statement(sql, persistent).await?;
+        let columns: Arc<[TursoColumn]> = turso_columns(statement.columns()).into();
+        let rows = match arguments {
             Some(arguments) => statement
                 .query(arguments.into_turso_values())
                 .await
                 .map_err(map_turso_error)?,
             None => statement.query(()).await.map_err(map_turso_error)?,
         };
-        let mut results = Vec::new();
 
-        while let Some(row) = rows.next().await.map_err(map_turso_error)? {
-            let mut values = Vec::with_capacity(columns.len());
-            for (index, column) in columns.iter().enumerate() {
-                values.push(
-                    TursoValue::from_turso(row.get_value(index).map_err(map_turso_error)?)
-                        .with_type_info(column.type_info().clone()),
-                );
-            }
-            results.push(Either::Right(TursoRow::new(columns.clone(), values)));
-        }
-
-        let rows_affected = statement.n_change();
-        results.push(Either::Left(TursoQueryResult::new(rows_affected)));
-        Ok(results)
+        Ok(stream::try_unfold(
+            FetchState::Rows {
+                rows,
+                statement,
+                columns,
+                pending_row: None,
+            },
+            FetchState::next,
+        )
+        .boxed())
     }
 
     async fn execute_batch_sql(
@@ -109,6 +94,88 @@ impl TursoConnection {
         self.cache_statement(sql.as_str(), statement.clone());
         Ok(statement)
     }
+
+    async fn prepare_query_statement(
+        &mut self,
+        sql: SqlStr,
+        persistent: bool,
+    ) -> Result<turso::Statement, Error> {
+        if persistent && let Some(statement) = self.prepare_sql(sql.clone()).await?.raw() {
+            return Ok(statement);
+        }
+
+        self.raw()
+            .prepare(sql.as_str())
+            .await
+            .map_err(map_turso_error)
+    }
+}
+
+enum FetchState {
+    Rows {
+        rows: turso::Rows,
+        statement: turso::Statement,
+        columns: Arc<[TursoColumn]>,
+        pending_row: Option<turso::Row>,
+    },
+    QueryResult(TursoQueryResult),
+    Done,
+}
+
+impl FetchState {
+    async fn next(self) -> Result<Option<(Either<TursoQueryResult, TursoRow>, Self)>, Error> {
+        if let Self::QueryResult(result) = self {
+            return Ok(Some((Either::Left(result), Self::Done)));
+        }
+
+        let Self::Rows {
+            mut rows,
+            statement,
+            columns,
+            pending_row,
+        } = self
+        else {
+            return Ok(None);
+        };
+
+        let row = match pending_row {
+            Some(row) => Some(row),
+            None => rows.next().await.map_err(map_turso_error)?,
+        };
+
+        let Some(row) = row else {
+            let rows_affected = statement.n_change();
+            return Ok(Some((
+                Either::Left(TursoQueryResult::new(rows_affected)),
+                Self::Done,
+            )));
+        };
+
+        let mut values = Vec::with_capacity(columns.len());
+        for (index, column) in columns.iter().enumerate() {
+            values.push(
+                TursoValue::from_turso(row.get_value(index).map_err(map_turso_error)?)
+                    .with_type_info(column.type_info().clone()),
+            );
+        }
+
+        let pending_row = rows.next().await.map_err(map_turso_error)?;
+        let next_state = if pending_row.is_some() {
+            Self::Rows {
+                rows,
+                statement,
+                columns: columns.clone(),
+                pending_row,
+            }
+        } else {
+            Self::QueryResult(TursoQueryResult::new(statement.n_change()))
+        };
+
+        Ok(Some((
+            Either::Right(TursoRow::with_shared_columns(columns.clone(), values)),
+            next_state,
+        )))
+    }
 }
 
 impl<'c> Executor<'c> for &'c mut TursoConnection {
@@ -126,13 +193,9 @@ impl<'c> Executor<'c> for &'c mut TursoConnection {
         let persistent = query.persistent();
         let sql = query.sql();
 
-        stream::once(async move {
-            self.fetch_many_sql(sql, persistent, arguments?)
-                .await
-                .map(|items| stream::iter(items.into_iter().map(Ok::<_, Error>)).boxed())
-        })
-        .try_flatten()
-        .boxed()
+        stream::once(async move { self.fetch_many_sql(sql, persistent, arguments?).await })
+            .try_flatten()
+            .boxed()
     }
 
     fn fetch_optional<'e, 'q: 'e, E>(
@@ -190,7 +253,14 @@ impl<'c> Executor<'c> for &'c mut TursoConnection {
     }
 }
 
-fn may_contain_multiple_statements(sql: &str) -> bool {
+#[derive(Debug, Default, Eq, PartialEq)]
+struct SqlInspection {
+    may_contain_multiple_statements: bool,
+    unsupported_named_placeholder: Option<String>,
+}
+
+fn inspect_sql(sql: &str) -> SqlInspection {
+    let mut inspection = SqlInspection::default();
     let mut saw_statement = false;
     let mut chars = sql.chars().peekable();
 
@@ -198,46 +268,35 @@ fn may_contain_multiple_statements(sql: &str) -> bool {
         match ch {
             '\'' => {
                 saw_statement = true;
-                while let Some(quoted) = next_char(&mut chars) {
-                    if quoted == '\'' && chars.next_if_eq(&'\'').is_none() {
-                        break;
-                    }
-                }
+                skip_single_quoted(&mut chars);
             }
             '"' | '`' => {
                 saw_statement = true;
-                for quoted in chars.by_ref() {
-                    if quoted == ch {
-                        break;
-                    }
-                }
+                skip_quoted(&mut chars, ch);
             }
             '[' => {
                 saw_statement = true;
-                for quoted in chars.by_ref() {
-                    if quoted == ']' {
-                        break;
-                    }
-                }
+                skip_quoted(&mut chars, ']');
             }
-            '-' if chars.next_if_eq(&'-').is_some() => {
-                for comment in chars.by_ref() {
-                    if comment == '\n' {
-                        break;
-                    }
-                }
-            }
-            '/' if chars.next_if_eq(&'*').is_some() => {
-                let mut previous = '\0';
-                for comment in chars.by_ref() {
-                    if previous == '*' && comment == '/' {
-                        break;
-                    }
-                    previous = comment;
-                }
-            }
+            '-' if chars.next_if_eq(&'-').is_some() => skip_line_comment(&mut chars),
+            '/' if chars.next_if_eq(&'*').is_some() => skip_block_comment(&mut chars),
             ';' if saw_statement && has_remaining_statement_text(chars.clone()) => {
-                return true;
+                inspection.may_contain_multiple_statements = true;
+                return inspection;
+            }
+            '$' => {
+                saw_statement = true;
+                let name = read_placeholder_name(&mut chars);
+                if name.parse::<usize>().is_err() {
+                    inspection.unsupported_named_placeholder = Some(format!("${name}"));
+                }
+            }
+            ':' | '@' => {
+                saw_statement = true;
+                let name = read_placeholder_name(&mut chars);
+                if !name.is_empty() {
+                    inspection.unsupported_named_placeholder = Some(format!("{ch}{name}"));
+                }
             }
             ch if !ch.is_whitespace() => {
                 saw_statement = true;
@@ -246,36 +305,7 @@ fn may_contain_multiple_statements(sql: &str) -> bool {
         }
     }
 
-    false
-}
-
-fn unsupported_named_placeholder(sql: &str) -> Option<String> {
-    let mut chars = sql.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\'' => skip_single_quoted(&mut chars),
-            '"' | '`' => skip_quoted(&mut chars, ch),
-            '[' => skip_quoted(&mut chars, ']'),
-            '-' if chars.next_if_eq(&'-').is_some() => skip_line_comment(&mut chars),
-            '/' if chars.next_if_eq(&'*').is_some() => skip_block_comment(&mut chars),
-            '$' => {
-                let name = read_placeholder_name(&mut chars);
-                if name.parse::<usize>().is_err() {
-                    return Some(format!("${name}"));
-                }
-            }
-            ':' | '@' => {
-                let name = read_placeholder_name(&mut chars);
-                if !name.is_empty() {
-                    return Some(format!("{ch}{name}"));
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
+    inspection
 }
 
 fn read_placeholder_name<I>(chars: &mut std::iter::Peekable<I>) -> String
@@ -357,22 +387,8 @@ where
 
     while let Some(ch) = chars.next() {
         match ch {
-            '-' if chars.next_if_eq(&'-').is_some() => {
-                for comment in chars.by_ref() {
-                    if comment == '\n' {
-                        break;
-                    }
-                }
-            }
-            '/' if chars.next_if_eq(&'*').is_some() => {
-                let mut previous = '\0';
-                for comment in chars.by_ref() {
-                    if previous == '*' && comment == '/' {
-                        break;
-                    }
-                    previous = comment;
-                }
-            }
+            '-' if chars.next_if_eq(&'-').is_some() => skip_line_comment(&mut chars),
+            '/' if chars.next_if_eq(&'*').is_some() => skip_block_comment(&mut chars),
             ch if !ch.is_whitespace() && ch != ';' => return true,
             _ => {}
         }

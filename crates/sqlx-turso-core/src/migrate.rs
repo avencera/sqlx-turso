@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     path::Path,
     str::FromStr,
     time::{Duration, Instant},
@@ -57,6 +58,7 @@ impl Migrate for TursoConnection {
         schema_name: &'e str,
     ) -> BoxFuture<'e, Result<(), MigrateError>> {
         Box::pin(async move {
+            let schema_name = SqliteIdentifier::parse(schema_name)?;
             let schema_version: Option<i64> = query_scalar(AssertSqlSafe(format!(
                 "PRAGMA {schema_name}.schema_version"
             )))
@@ -78,6 +80,7 @@ impl Migrate for TursoConnection {
         table_name: &'e str,
     ) -> BoxFuture<'e, Result<(), MigrateError>> {
         Box::pin(async move {
+            let table_name = SqliteIdentifierPath::parse(table_name)?;
             self.execute(AssertSqlSafe(format!(
                 r#"
 CREATE TABLE IF NOT EXISTS {table_name} (
@@ -101,6 +104,7 @@ CREATE TABLE IF NOT EXISTS {table_name} (
         table_name: &'e str,
     ) -> BoxFuture<'e, Result<Option<i64>, MigrateError>> {
         Box::pin(async move {
+            let table_name = SqliteIdentifierPath::parse(table_name)?;
             let row: Option<(i64,)> = query_as(AssertSqlSafe(format!(
                 "SELECT version FROM {table_name} WHERE success = false ORDER BY version LIMIT 1"
             )))
@@ -116,6 +120,7 @@ CREATE TABLE IF NOT EXISTS {table_name} (
         table_name: &'e str,
     ) -> BoxFuture<'e, Result<Vec<AppliedMigration>, MigrateError>> {
         Box::pin(async move {
+            let table_name = SqliteIdentifierPath::parse(table_name)?;
             let rows: Vec<(i64, Vec<u8>)> = query_as(AssertSqlSafe(format!(
                 "SELECT version, checksum FROM {table_name} ORDER BY version"
             )))
@@ -146,13 +151,14 @@ CREATE TABLE IF NOT EXISTS {table_name} (
         migration: &'e Migration,
     ) -> BoxFuture<'e, Result<Duration, MigrateError>> {
         Box::pin(async move {
+            let table_name = SqliteIdentifierPath::parse(table_name)?;
             let start = Instant::now();
 
             let result = if migration.no_tx {
-                execute_migration(self, table_name, migration).await
+                execute_migration(self, &table_name, migration).await
             } else {
                 let mut transaction = self.begin().await?;
-                let result = execute_migration(&mut transaction, table_name, migration).await;
+                let result = execute_migration(&mut transaction, &table_name, migration).await;
                 if result.is_ok() {
                     transaction.commit().await?;
                 }
@@ -161,7 +167,7 @@ CREATE TABLE IF NOT EXISTS {table_name} (
             };
 
             if let Err(error) = result {
-                insert_migration_row(self, table_name, migration, false).await?;
+                insert_migration_row(self, &table_name, migration, false).await?;
                 return Err(error);
             }
 
@@ -190,13 +196,14 @@ WHERE version = ?2
         migration: &'e Migration,
     ) -> BoxFuture<'e, Result<Duration, MigrateError>> {
         Box::pin(async move {
+            let table_name = SqliteIdentifierPath::parse(table_name)?;
             let start = Instant::now();
 
             if migration.no_tx {
-                revert_migration(self, table_name, migration).await?;
+                revert_migration(self, &table_name, migration).await?;
             } else {
                 let mut transaction = self.begin().await?;
-                revert_migration(&mut transaction, table_name, migration).await?;
+                revert_migration(&mut transaction, &table_name, migration).await?;
                 transaction.commit().await?;
             }
 
@@ -210,6 +217,7 @@ WHERE version = ?2
         migration: &'e Migration,
     ) -> BoxFuture<'e, Result<(), MigrateError>> {
         Box::pin(async move {
+            let table_name = SqliteIdentifierPath::parse(table_name)?;
             let _ = query(AssertSqlSafe(format!(
                 r#"
 INSERT INTO {table_name} ( version, description, success, checksum, execution_time )
@@ -241,7 +249,7 @@ async fn remove_known_database_files(path: &Path) -> Result<(), Error> {
 
 async fn execute_migration(
     conn: &mut TursoConnection,
-    table_name: &str,
+    table_name: &SqliteIdentifierPath,
     migration: &Migration,
 ) -> Result<(), MigrateError> {
     let _ = conn
@@ -256,7 +264,7 @@ async fn execute_migration(
 
 async fn insert_migration_row(
     conn: &mut TursoConnection,
-    table_name: &str,
+    table_name: &SqliteIdentifierPath,
     migration: &Migration,
     success: bool,
 ) -> Result<(), MigrateError> {
@@ -278,7 +286,7 @@ VALUES ( ?1, ?2, ?3, ?4, -1 )
 
 async fn revert_migration(
     conn: &mut TursoConnection,
-    table_name: &str,
+    table_name: &SqliteIdentifierPath,
     migration: &Migration,
 ) -> Result<(), MigrateError> {
     let _ = conn
@@ -297,6 +305,77 @@ WHERE version = ?1
     .await?;
 
     Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct SqliteIdentifier(String);
+
+impl SqliteIdentifier {
+    fn parse(value: &str) -> Result<Self, MigrateError> {
+        let mut chars = value.chars();
+        let Some(first) = chars.next() else {
+            return Err(invalid_identifier(value));
+        };
+
+        if !is_identifier_start(first) || !chars.all(is_identifier_continue) {
+            return Err(invalid_identifier(value));
+        }
+
+        Ok(Self(value.to_owned()))
+    }
+}
+
+impl fmt::Display for SqliteIdentifier {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"{}\"", self.0)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct SqliteIdentifierPath(Vec<SqliteIdentifier>);
+
+impl SqliteIdentifierPath {
+    fn parse(value: &str) -> Result<Self, MigrateError> {
+        let parts = value
+            .split('.')
+            .map(SqliteIdentifier::parse)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if !(1..=2).contains(&parts.len()) {
+            return Err(invalid_identifier(value));
+        }
+
+        Ok(Self(parts))
+    }
+}
+
+impl fmt::Display for SqliteIdentifierPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut parts = self.0.iter();
+        if let Some(first) = parts.next() {
+            write!(f, "{first}")?;
+        }
+
+        for part in parts {
+            write!(f, ".{part}")?;
+        }
+
+        Ok(())
+    }
+}
+
+fn is_identifier_start(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphabetic()
+}
+
+fn is_identifier_continue(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric()
+}
+
+fn invalid_identifier(value: &str) -> MigrateError {
+    MigrateError::Execute(Error::Configuration(
+        format!("invalid SQLite identifier `{value}`").into(),
+    ))
 }
 
 #[cfg(test)]
@@ -406,6 +485,20 @@ mod tests {
             sqlx_core::migrate::MigrateError::ExecuteMigration(_, 2)
         ));
         assert_eq!(conn.dirty_version(MIGRATIONS_TABLE).await?, Some(2));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_migration_table_identifier() -> sqlx_core::Result<()> {
+        let mut conn = TursoConnectOptions::new().connect().await?;
+
+        let error = conn
+            .ensure_migrations_table("_sqlx_migrations; DROP TABLE users")
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("invalid SQLite identifier"));
 
         Ok(())
     }

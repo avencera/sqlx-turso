@@ -834,8 +834,13 @@ fn decode_chrono_datetime_from_real(value: f64) -> Option<chrono::DateTime<chron
         return None;
     }
 
-    let seconds = timestamp.trunc() as i64;
-    let nanos = (timestamp.fract() * 1E9).abs() as u32;
+    let mut seconds = timestamp.floor() as i64;
+    let mut nanos = ((timestamp - seconds as f64) * 1E9).round() as u32;
+    if nanos == 1_000_000_000 {
+        seconds += 1;
+        nanos = 0;
+    }
+
     chrono::Utc.fix().timestamp_opt(seconds, nanos).single()
 }
 
@@ -1025,3 +1030,17 @@ fn decode_time_primitive_datetime_from_text(
 }
 
 sqlx_core::impl_encode_for_option!(Turso);
+
+#[cfg(all(test, feature = "chrono"))]
+mod tests {
+    use super::decode_chrono_datetime_from_real;
+
+    #[test]
+    fn decodes_negative_fractional_julian_day_timestamp() {
+        let julian_day = 2_440_587.5 - (0.5 / 86_400.0);
+        let datetime = decode_chrono_datetime_from_real(julian_day).unwrap();
+
+        assert_eq!(datetime.timestamp(), -1);
+        assert!((499_900_000..=500_100_000).contains(&datetime.timestamp_subsec_nanos()));
+    }
+}

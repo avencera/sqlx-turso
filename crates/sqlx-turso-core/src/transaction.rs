@@ -322,6 +322,7 @@ mod tests {
 
         let mut connection = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .mvcc(true)
             .connect()
             .await?;
@@ -355,7 +356,10 @@ mod tests {
         ));
         let _ = std::fs::remove_file(&path);
 
-        let options = TursoConnectOptions::new().filename(&path).mvcc(true);
+        let options = TursoConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true)
+            .mvcc(true);
         let mut first = options.clone().connect().await?;
         let mut second = options.connect().await?;
 
@@ -416,7 +420,7 @@ mod tests {
             .fetch_one("SELECT COUNT(*) AS count FROM test")
             .await
             .expect_err("scheduled nested rollback should fail after raw rollback");
-        assert!(matches!(error, sqlx_core::error::Error::Configuration(_)));
+        assert!(matches!(error, sqlx_core::error::Error::Database(_)));
 
         let error = (&mut connection)
             .fetch_one("SELECT COUNT(*) AS count FROM test")

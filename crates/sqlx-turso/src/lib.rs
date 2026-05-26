@@ -37,6 +37,8 @@
 //! Unsupported SQLite/Turso surfaces are documented in the repository README and remain disabled
 //! unless the pinned SQLx and Turso APIs expose enough behavior to test them honestly
 
+extern crate self as sqlx_turso;
+
 pub use sqlx_turso_core::{
     Turso, TursoAdapterError, TursoConnectOptions, TursoConnection, TursoDescribeExt,
     TursoEncryptionOptions, TursoExecutor, TursoExperimentalFeature, TursoExperimentalFeatures,
@@ -54,4 +56,6 @@ pub use sqlx;
 pub use sqlx_turso_core::{TURSO_ANY_DRIVER, install_any_driver};
 
 #[cfg(feature = "macros")]
-pub use sqlx_turso_macros::{query, query_as, query_file, query_file_as, query_scalar};
+pub use sqlx_turso_macros::{
+    query, query_as, query_file, query_file_as, query_file_scalar, query_scalar,
+};

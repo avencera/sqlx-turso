@@ -101,9 +101,8 @@ pub struct TursoConnectOptions(Arc<TursoConnectOptionsInner>);
 #[derive(Clone, Debug)]
 struct TursoConnectOptionsInner {
     target: TursoDatabaseTarget,
-    read_only: bool,
-    create_if_missing: bool,
-    shared_cache: bool,
+    open_mode: TursoOpenMode,
+    cache_mode: TursoCacheMode,
     immutable: bool,
     busy_timeout: Duration,
     statement_cache_capacity: usize,
@@ -117,9 +116,97 @@ struct TursoConnectOptionsInner {
     memory_state: Arc<TursoMemoryState>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TursoOpenMode {
+    ReadWrite,
+    CreateIfMissing,
+    ReadOnly,
+}
+
+impl TursoOpenMode {
+    fn from_read_only(read_only: bool, current: Self) -> Self {
+        if read_only {
+            return Self::ReadOnly;
+        }
+
+        if current == Self::ReadOnly {
+            return Self::ReadWrite;
+        }
+
+        current
+    }
+
+    fn from_create_if_missing(create_if_missing: bool, current: Self) -> Self {
+        if create_if_missing {
+            return Self::CreateIfMissing;
+        }
+
+        if current == Self::CreateIfMissing {
+            return Self::ReadWrite;
+        }
+
+        current
+    }
+
+    fn is_read_only(self) -> bool {
+        self == Self::ReadOnly
+    }
+
+    fn create_if_missing(self) -> bool {
+        self == Self::CreateIfMissing
+    }
+
+    fn url_mode(self, target: &TursoDatabaseTarget) -> &'static str {
+        if matches!(target, TursoDatabaseTarget::Memory { .. }) {
+            return "memory";
+        }
+
+        match self {
+            Self::ReadWrite => "rw",
+            Self::CreateIfMissing => "rwc",
+            Self::ReadOnly => "ro",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TursoCacheMode {
+    Private,
+    Shared,
+}
+
+impl TursoCacheMode {
+    fn from_shared(shared_cache: bool) -> Self {
+        if shared_cache {
+            Self::Shared
+        } else {
+            Self::Private
+        }
+    }
+
+    fn is_shared(self) -> bool {
+        self == Self::Shared
+    }
+
+    fn url_value(self) -> &'static str {
+        match self {
+            Self::Private => "private",
+            Self::Shared => "shared",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct TursoMemoryState {
     pub(crate) database: tokio::sync::Mutex<Option<turso::Database>>,
+}
+
+impl TursoMemoryState {
+    fn new() -> Self {
+        Self {
+            database: tokio::sync::Mutex::new(None),
+        }
+    }
 }
 
 impl TursoConnectOptions {
@@ -148,17 +235,17 @@ impl TursoConnectOptions {
 
     /// Returns whether the database should be opened read-only
     pub fn is_read_only(&self) -> bool {
-        self.0.read_only
+        self.0.open_mode.is_read_only()
     }
 
     /// Returns whether a missing file-backed database should be created
     pub fn get_create_if_missing(&self) -> bool {
-        self.0.create_if_missing
+        self.0.open_mode.create_if_missing()
     }
 
     /// Returns whether Turso should use a shared cache for this database
     pub fn get_shared_cache(&self) -> bool {
-        self.0.shared_cache
+        self.0.cache_mode.is_shared()
     }
 
     /// Returns whether the database should be opened as immutable
@@ -230,7 +317,7 @@ impl TursoConnectOptions {
     pub fn filename(mut self, filename: impl AsRef<Path>) -> Self {
         let inner = Arc::make_mut(&mut self.0);
         inner.target = TursoDatabaseTarget::File(filename.as_ref().to_path_buf());
-        inner.shared_cache = false;
+        inner.cache_mode = TursoCacheMode::Private;
         self
     }
 
@@ -240,13 +327,14 @@ impl TursoConnectOptions {
 
         if in_memory {
             inner.target = new_memory_target();
-            inner.shared_cache = true;
+            inner.cache_mode = TursoCacheMode::Shared;
+            inner.memory_state = Arc::new(TursoMemoryState::new());
             return self;
         }
 
         if matches!(inner.target, TursoDatabaseTarget::Memory { .. }) {
             inner.target = TursoDatabaseTarget::File(PathBuf::from(":memory:"));
-            inner.shared_cache = false;
+            inner.cache_mode = TursoCacheMode::Private;
         }
 
         self
@@ -254,19 +342,21 @@ impl TursoConnectOptions {
 
     /// Sets whether the database should be opened read-only
     pub fn read_only(mut self, read_only: bool) -> Self {
-        Arc::make_mut(&mut self.0).read_only = read_only;
+        let inner = Arc::make_mut(&mut self.0);
+        inner.open_mode = TursoOpenMode::from_read_only(read_only, inner.open_mode);
         self
     }
 
     /// Sets whether a missing file-backed database should be created
     pub fn create_if_missing(mut self, create_if_missing: bool) -> Self {
-        Arc::make_mut(&mut self.0).create_if_missing = create_if_missing;
+        let inner = Arc::make_mut(&mut self.0);
+        inner.open_mode = TursoOpenMode::from_create_if_missing(create_if_missing, inner.open_mode);
         self
     }
 
     /// Sets whether Turso should use a shared cache for this database
     pub fn shared_cache(mut self, shared_cache: bool) -> Self {
-        Arc::make_mut(&mut self.0).shared_cache = shared_cache;
+        Arc::make_mut(&mut self.0).cache_mode = TursoCacheMode::from_shared(shared_cache);
         self
     }
 
@@ -391,9 +481,8 @@ impl Default for TursoConnectOptions {
     fn default() -> Self {
         Self(Arc::new(TursoConnectOptionsInner {
             target: new_memory_target(),
-            read_only: false,
-            create_if_missing: false,
-            shared_cache: true,
+            open_mode: TursoOpenMode::ReadWrite,
+            cache_mode: TursoCacheMode::Shared,
             immutable: false,
             busy_timeout: DEFAULT_BUSY_TIMEOUT,
             statement_cache_capacity: DEFAULT_STATEMENT_CACHE_CAPACITY,
@@ -404,9 +493,7 @@ impl Default for TursoConnectOptions {
             experimental_features: TursoExperimentalFeatures::default(),
             pragmas: default_pragmas(),
             log_settings: LogSettings::default(),
-            memory_state: Arc::new(TursoMemoryState {
-                database: tokio::sync::Mutex::new(None),
-            }),
+            memory_state: Arc::new(TursoMemoryState::new()),
         }))
     }
 }
@@ -628,24 +715,10 @@ impl TursoConnectOptions {
             url.set_path(&path);
         }
 
-        let mode = match (
-            self.0.target.clone(),
-            self.0.create_if_missing,
-            self.0.read_only,
-        ) {
-            (TursoDatabaseTarget::Memory { .. }, _, _) => "memory",
-            (_, true, _) => "rwc",
-            (_, false, true) => "ro",
-            (_, false, false) => "rw",
-        };
-        url.query_pairs_mut().append_pair("mode", mode);
-
-        let cache = if self.0.shared_cache {
-            "shared"
-        } else {
-            "private"
-        };
-        url.query_pairs_mut().append_pair("cache", cache);
+        url.query_pairs_mut()
+            .append_pair("mode", self.0.open_mode.url_mode(&self.0.target));
+        url.query_pairs_mut()
+            .append_pair("cache", self.0.cache_mode.url_value());
 
         if self.0.immutable {
             url.query_pairs_mut().append_pair("immutable", "true");
@@ -936,6 +1009,7 @@ mod tests {
     use sqlx_core::{
         connection::{ConnectOptions, Connection},
         error::Error,
+        executor::Executor,
     };
     use std::{path::Path, str::FromStr, sync::Arc, time::Duration};
     use url::Url;
@@ -984,6 +1058,20 @@ mod tests {
                 TursoDatabaseTarget::Memory { name },
                 TursoDatabaseTarget::Memory { name: clone_name },
             ) => assert!(Arc::ptr_eq(name, clone_name)),
+            _ => panic!("expected in-memory targets"),
+        }
+    }
+
+    #[test]
+    fn in_memory_resets_memory_identity() {
+        let options = TursoConnectOptions::new();
+        let reset = options.clone().in_memory(true);
+
+        match (options.target(), reset.target()) {
+            (
+                TursoDatabaseTarget::Memory { name },
+                TursoDatabaseTarget::Memory { name: reset_name },
+            ) => assert!(!Arc::ptr_eq(name, reset_name)),
             _ => panic!("expected in-memory targets"),
         }
     }
@@ -1116,6 +1204,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_write_file_mode_rejects_missing_database() -> sqlx_core::Result<()> {
+        let path =
+            std::env::temp_dir().join(format!("sqlx-turso-missing-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let options = TursoConnectOptions::new().filename(&path);
+        let error = options.connect().await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Io(ref io_error) if io_error.kind() == std::io::ErrorKind::NotFound
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn private_memory_cache_uses_distinct_databases() -> sqlx_core::Result<()> {
+        let options = TursoConnectOptions::new()
+            .in_memory(true)
+            .shared_cache(false);
+        let mut first = options.connect().await?;
+        let mut second = options.connect().await?;
+
+        first
+            .execute("CREATE TABLE private_cache_test (id INTEGER PRIMARY KEY)")
+            .await?;
+
+        let error = second
+            .execute("INSERT INTO private_cache_test (id) VALUES (1)")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("private_cache_test"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn connect_rejects_read_only_until_mapped() -> sqlx_core::Result<()> {
         let options = TursoConnectOptions::from_str("turso://data.db?mode=ro")?;
         let error = options.connect().await.unwrap_err();
@@ -1153,6 +1279,7 @@ mod tests {
 
         let options = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .encryption_options(TursoEncryptionOptions::new(
                 "aegis256",
                 "b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76327",
@@ -1193,6 +1320,7 @@ mod tests {
 
         let options = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .mvcc(true)
             .experimental_feature(TursoExperimentalFeature::Attach, true)
             .experimental_feature(TursoExperimentalFeature::IndexMethod, true);

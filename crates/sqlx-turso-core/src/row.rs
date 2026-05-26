@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use sqlx_core::{column::ColumnIndex, error::Error, impl_column_index_for_row, row::Row};
 
 use crate::{Turso, TursoColumn, TursoValue, TursoValueRef};
@@ -5,13 +7,23 @@ use crate::{Turso, TursoColumn, TursoValue, TursoValueRef};
 /// Row returned from a Turso query
 #[derive(Clone, Debug, Default)]
 pub struct TursoRow {
-    columns: Vec<TursoColumn>,
+    columns: Arc<[TursoColumn]>,
     values: Vec<TursoValue>,
 }
 
 impl TursoRow {
     /// Creates a row from column metadata and values
     pub fn new(columns: Vec<TursoColumn>, values: Vec<TursoValue>) -> Self {
+        Self {
+            columns: columns.into(),
+            values,
+        }
+    }
+
+    pub(crate) fn with_shared_columns(
+        columns: Arc<[TursoColumn]>,
+        values: Vec<TursoValue>,
+    ) -> Self {
         Self { columns, values }
     }
 }

@@ -18,10 +18,10 @@ sync = ["sqlx-turso-core/sync"]
 fts = ["sqlx-turso-core/fts"]
 migrate = ["sqlx-turso-core/migrate"]
 offline = ["sqlx-turso-core/offline"]
-chrono = ["sqlx-turso-core/chrono"]
+chrono = ["sqlx-turso-core/chrono", "sqlx-turso-macros?/chrono"]
 json = ["sqlx-turso-core/json"]
-time = ["sqlx-turso-core/time"]
-uuid = ["sqlx-turso-core/uuid"]
+time = ["sqlx-turso-core/time", "sqlx-turso-macros?/time"]
+uuid = ["sqlx-turso-core/uuid", "sqlx-turso-macros?/uuid"]
 
 [dependencies]
 sqlx.workspace = true
@@ -42,3 +42,11 @@ required-features = ["migrate"]
 [[example]]
 name = "sync"
 required-features = ["sync"]
+
+[[test]]
+name = "macros"
+required-features = ["macros"]
+
+[[test]]
+name = "online_macros"
+required-features = ["macros"]

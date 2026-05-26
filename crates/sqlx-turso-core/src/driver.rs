@@ -1,3 +1,5 @@
+use std::io;
+
 use sqlx_core::error::Error;
 
 use crate::{
@@ -97,16 +99,41 @@ impl TursoDriver {
     }
 
     async fn database(options: &TursoConnectOptions) -> Result<turso::Database, Error> {
+        Self::validate_open_support(options)?;
+
         match options.target() {
             TursoDatabaseTarget::Memory { .. } => Self::memory_database(options).await,
             TursoDatabaseTarget::File(path) => {
+                if !options.get_create_if_missing() && !path.exists() {
+                    return Err(Error::Io(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("database file {} does not exist", path.display()),
+                    )));
+                }
+
                 let path = path.to_string_lossy();
                 Self::build_database(options, &path).await
             }
         }
     }
 
+    fn validate_open_support(options: &TursoConnectOptions) -> Result<(), Error> {
+        if options.is_read_only() {
+            return Err(unsupported_sqlx("read-only Turso connections"));
+        }
+
+        if options.get_immutable() {
+            return Err(unsupported_sqlx("immutable Turso connections"));
+        }
+
+        Ok(())
+    }
+
     async fn memory_database(options: &TursoConnectOptions) -> Result<turso::Database, Error> {
+        if !options.get_shared_cache() {
+            return Self::build_database(options, ":memory:").await;
+        }
+
         let mut database = options.memory_state().database.lock().await;
 
         if let Some(database) = database.as_ref() {
@@ -122,14 +149,6 @@ impl TursoDriver {
         options: &TursoConnectOptions,
         path: &str,
     ) -> Result<turso::Database, Error> {
-        if options.is_read_only() {
-            return Err(unsupported_sqlx("read-only Turso connections"));
-        }
-
-        if options.get_immutable() {
-            return Err(unsupported_sqlx("immutable Turso connections"));
-        }
-
         let mut builder = turso::Builder::new_local(path);
 
         if let Some(io) = options.get_custom_io() {

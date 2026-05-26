@@ -163,6 +163,7 @@ mod tests {
 
         let mut connection = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .experimental_feature(TursoExperimentalFeature::Vacuum, true)
             .connect()
             .await?;
@@ -186,6 +187,7 @@ mod tests {
 
         let error = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .pragma("auto_vacuum", Some("FULL".to_owned()))
             .experimental_feature(TursoExperimentalFeature::Vacuum, true)
             .connect()
@@ -207,6 +209,7 @@ mod tests {
 
         let mut connection = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .vfs("memory")
             .connect()
             .await?;
@@ -237,6 +240,7 @@ mod tests {
 
         let mut connection = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .custom_io(std::sync::Arc::new(turso::core::MemoryIO::new()))
             .connect()
             .await?;
@@ -269,6 +273,7 @@ mod tests {
 
         let options = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .experimental_feature(TursoExperimentalFeature::MultiprocessWal, true);
         let mut first = options.clone().connect().await?;
         let mut second = options.connect().await?;
@@ -300,6 +305,7 @@ mod tests {
 
         let mut connection = TursoConnectOptions::new()
             .filename(&path)
+            .create_if_missing(true)
             .with_sync_options(
                 TursoSyncOptions::new("http://127.0.0.1:9")
                     .with_bootstrap_if_empty(false)

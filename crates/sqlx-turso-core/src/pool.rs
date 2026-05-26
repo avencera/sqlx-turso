@@ -26,6 +26,7 @@ mod tests {
             .connect_with(
                 TursoConnectOptions::new()
                     .filename(&path)
+                    .create_if_missing(true)
                     .busy_timeout(std::time::Duration::from_millis(50)),
             )
             .await?;
@@ -121,7 +122,11 @@ mod tests {
 
         let pool = TursoPoolOptions::new()
             .max_connections(4)
-            .connect_with(TursoConnectOptions::new().filename(&path))
+            .connect_with(
+                TursoConnectOptions::new()
+                    .filename(&path)
+                    .create_if_missing(true),
+            )
             .await?;
 
         let mut connection = pool.acquire().await?;
@@ -154,7 +159,11 @@ mod tests {
 
         let pool = TursoPoolOptions::new()
             .max_connections(2)
-            .connect_with(TursoConnectOptions::new().filename(&path))
+            .connect_with(
+                TursoConnectOptions::new()
+                    .filename(&path)
+                    .create_if_missing(true),
+            )
             .await?;
 
         let mut first = pool.acquire().await?;
@@ -198,6 +207,7 @@ mod tests {
             .connect_with(
                 TursoConnectOptions::new()
                     .filename(&path)
+                    .create_if_missing(true)
                     .encryption_options(TursoEncryptionOptions::new(
                         "aegis256",
                         "b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76327",
@@ -252,6 +262,7 @@ mod tests {
             .connect_with(
                 TursoConnectOptions::new()
                     .filename(&path)
+                    .create_if_missing(true)
                     .with_sync_options(
                         crate::TursoSyncOptions::new("http://127.0.0.1:9")
                             .with_bootstrap_if_empty(false),

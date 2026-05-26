@@ -5,8 +5,14 @@ use sqlx_turso::{
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> sqlx_turso::sqlx::Result<()> {
+    let path = std::env::temp_dir().join(format!(
+        "sqlx-turso-encrypted-example-{}.db",
+        std::process::id()
+    ));
+
     let mut conn = TursoConnectOptions::new()
-        .filename("/tmp/sqlx-turso-encrypted-example.db")
+        .filename(path)
+        .create_if_missing(true)
         .encryption_options(TursoEncryptionOptions::new("aegis256", "0011223344556677")?)
         .mvcc(true)
         .connect()
