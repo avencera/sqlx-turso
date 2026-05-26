@@ -44,6 +44,14 @@ async fn example() -> sqlx_turso::sqlx::Result<()> {
 - `fts`: forwards Turso FTS support
 - `sync`: local sync-backed connections and sync checkpoint/stat APIs
 
+## Installation
+
+Install the `sqlx-turso` CLI with Cargo:
+
+```sh
+cargo install sqlx-turso-cli --version 0.1.0-alpha.1
+```
+
 ## SQLx Any
 
 Enable the `any` feature and install the Turso driver before opening
@@ -67,7 +75,7 @@ are Turso-specific macros exported by this crate, not the stock `sqlx::query!`
 macros.
 
 ```toml
-sqlx-turso = { version = "0.1", features = ["macros"] }
+sqlx-turso = { version = "0.1.0-alpha.1", features = ["macros"] }
 ```
 
 ```rust

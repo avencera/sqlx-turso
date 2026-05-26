@@ -2633,7 +2633,7 @@ dependencies = [
 
 [[package]]
 name = "sqlx-turso"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "sqlx",
  "sqlx-turso-core",
@@ -2644,14 +2644,14 @@ dependencies = [
 
 [[package]]
 name = "sqlx-turso-cli"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "clap",
 ]
 
 [[package]]
 name = "sqlx-turso-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "chrono",
  "either",
@@ -2672,7 +2672,7 @@ dependencies = [
 
 [[package]]
 name = "sqlx-turso-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",

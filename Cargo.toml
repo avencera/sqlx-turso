@@ -8,10 +8,12 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/avencera/sqlx-turso"
+homepage = "https://github.com/avencera/sqlx-turso"
 
 [workspace.dependencies]
 sqlx = { version = "=0.9.0", default-features = false }
@@ -36,5 +38,5 @@ trybuild = "1.0.116"
 url = "2.5.8"
 uuid = "1.23.1"
 
-sqlx-turso-core = { path = "crates/sqlx-turso-core", version = "0.1.0" }
-sqlx-turso-macros = { path = "crates/sqlx-turso-macros", version = "0.1.0" }
+sqlx-turso-core = { path = "crates/sqlx-turso-core", version = "0.1.0-alpha.1" }
+sqlx-turso-macros = { path = "crates/sqlx-turso-macros", version = "0.1.0-alpha.1" }
