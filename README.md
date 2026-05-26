@@ -56,14 +56,12 @@ Stock `cargo sqlx prepare` does not know the `turso:` URL scheme. Use the wrappe
 sqlx-turso prepare --database-url turso:///path/to/app.db -- -p your-crate --features macros
 ```
 
-## Unsupported Or Precisely Blocked Surfaces
+## Current Limitations
 
-- true read-only and immutable open modes are rejected because pinned `turso =0.7.0-pre.3` exposes no public builder mapping
-- stored generated columns are not claimed; current coverage verifies virtual generated columns
-- autovacuum remains blocked because the pinned public Turso builder exposes VACUUM but not the required autovacuum flag
-- full remote sync push/pull tests require a committed sync-server fixture; default tests do not require public network, Turso Cloud credentials, or a local server
-- sync custom IO is blocked because the pinned sync builder does not expose the local `with_io_impl` hook
-- SQLx SQLite features such as `deserialize`, `load-extension`, `preupdate-hook`, and `unlock-notify` are not exposed without tested Turso-safe hooks
-- decimal precision integrations are deferred until an explicit storage contract exists
+- read-only and immutable opens are rejected until Turso exposes matching builder options
+- only virtual generated columns are covered; stored generated columns are not supported
+- autovacuum is disabled because Turso exposes `VACUUM` but not the autovacuum builder flag
+- remote sync push/pull is not tested yet; default sync tests run without a server
+- sync connections cannot use custom IO until Turso exposes that hook
 
 See `examples/` for connect, pool, transaction, migration, checked-query, encryption/MVCC, and sync snippets.
