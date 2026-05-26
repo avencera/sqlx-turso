@@ -312,22 +312,86 @@ struct SqliteIdentifier(String);
 
 impl SqliteIdentifier {
     fn parse(value: &str) -> Result<Self, MigrateError> {
-        let mut chars = value.chars();
-        let Some(first) = chars.next() else {
-            return Err(invalid_identifier(value));
-        };
-
-        if !is_identifier_start(first) || !chars.all(is_identifier_continue) {
+        let (identifier, rest) = Self::parse_prefix(value, value)?;
+        if !rest.is_empty() {
             return Err(invalid_identifier(value));
         }
 
-        Ok(Self(value.to_owned()))
+        Ok(identifier)
+    }
+
+    fn parse_prefix<'a>(value: &'a str, original: &str) -> Result<(Self, &'a str), MigrateError> {
+        if let Some(quoted) = value.strip_prefix('"') {
+            return Self::parse_quoted_prefix(quoted, original);
+        }
+
+        Self::parse_bare_prefix(value, original)
+    }
+
+    fn parse_bare_prefix<'a>(
+        value: &'a str,
+        original: &str,
+    ) -> Result<(Self, &'a str), MigrateError> {
+        let mut chars = value.char_indices().peekable();
+        let Some((_, first)) = chars.next() else {
+            return Err(invalid_identifier(original));
+        };
+
+        if !is_identifier_start(first) {
+            return Err(invalid_identifier(original));
+        }
+
+        let mut end = first.len_utf8();
+        while let Some((index, ch)) = chars.peek().copied() {
+            if !is_identifier_continue(ch) {
+                break;
+            }
+
+            end = index + ch.len_utf8();
+            let _ = chars.next();
+        }
+
+        Ok((Self(value[..end].to_owned()), &value[end..]))
+    }
+
+    fn parse_quoted_prefix<'a>(
+        value: &'a str,
+        original: &str,
+    ) -> Result<(Self, &'a str), MigrateError> {
+        let mut identifier = String::new();
+        let mut chars = value.char_indices().peekable();
+
+        while let Some((index, ch)) = chars.next() {
+            if ch != '"' {
+                identifier.push(ch);
+                continue;
+            }
+
+            if chars.peek().is_some_and(|(_, next)| *next == '"') {
+                identifier.push('"');
+                let _ = chars.next();
+                continue;
+            }
+
+            if identifier.is_empty() {
+                return Err(invalid_identifier(original));
+            }
+
+            let rest_start = index + ch.len_utf8();
+            return Ok((Self(identifier), &value[rest_start..]));
+        }
+
+        Err(invalid_identifier(original))
+    }
+
+    fn escaped(&self) -> String {
+        self.0.replace('"', "\"\"")
     }
 }
 
 impl fmt::Display for SqliteIdentifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "\"{}\"", self.0)
+        write!(f, "\"{}\"", self.escaped())
     }
 }
 
@@ -336,12 +400,20 @@ struct SqliteIdentifierPath(Vec<SqliteIdentifier>);
 
 impl SqliteIdentifierPath {
     fn parse(value: &str) -> Result<Self, MigrateError> {
-        let parts = value
-            .split('.')
-            .map(SqliteIdentifier::parse)
-            .collect::<Result<Vec<_>, _>>()?;
+        let (first, mut rest) = SqliteIdentifier::parse_prefix(value, value)?;
+        let mut parts = vec![first];
 
-        if !(1..=2).contains(&parts.len()) {
+        while let Some(next) = rest.strip_prefix('.') {
+            if parts.len() == 2 {
+                return Err(invalid_identifier(value));
+            }
+
+            let (part, remaining) = SqliteIdentifier::parse_prefix(next, value)?;
+            parts.push(part);
+            rest = remaining;
+        }
+
+        if !rest.is_empty() {
             return Err(invalid_identifier(value));
         }
 
@@ -468,6 +540,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn supports_quoted_schema_qualified_migration_table_name() -> sqlx_core::Result<()> {
+        let mut conn = TursoConnectOptions::new().connect().await?;
+        let migrations_table = r#""main"."sqlx migrations""#;
+        conn.ensure_migrations_table(migrations_table).await?;
+
+        let up = migration(
+            10,
+            "create quoted widgets",
+            MigrationType::ReversibleUp,
+            "CREATE TABLE quoted_widgets(id INTEGER PRIMARY KEY, name TEXT NOT NULL); INSERT INTO quoted_widgets(name) VALUES ('one')",
+        );
+        let down = migration(
+            10,
+            "create quoted widgets",
+            MigrationType::ReversibleDown,
+            "DROP TABLE quoted_widgets",
+        );
+
+        conn.apply(migrations_table, &up).await?;
+
+        let applied = conn.list_applied_migrations(migrations_table).await?;
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].version, 10);
+
+        let count: i64 = query_scalar("SELECT COUNT(*) FROM quoted_widgets")
+            .fetch_one(&mut conn)
+            .await?;
+        assert_eq!(count, 1);
+
+        conn.revert(migrations_table, &down).await?;
+        assert!(
+            conn.list_applied_migrations(migrations_table)
+                .await?
+                .is_empty()
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn records_dirty_migration_on_failure() -> sqlx_core::Result<()> {
         let mut conn = TursoConnectOptions::new().connect().await?;
         conn.ensure_migrations_table(MIGRATIONS_TABLE).await?;
@@ -501,6 +613,14 @@ mod tests {
         assert!(error.to_string().contains("invalid SQLite identifier"));
 
         Ok(())
+    }
+
+    #[test]
+    fn parses_and_escapes_quoted_identifier_paths() {
+        let path = super::SqliteIdentifierPath::parse(r#""main"."migration ""audit""""#)
+            .expect("quoted identifier path should parse");
+
+        assert_eq!(path.to_string(), r#""main"."migration ""audit""""#);
     }
 
     fn migration(
