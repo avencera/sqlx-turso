@@ -4,93 +4,69 @@ use std::{
     process::{Command, ExitCode},
 };
 
+use clap::{Args, CommandFactory, Parser, Subcommand};
+
 fn main() -> ExitCode {
-    match run(env::args().skip(1).collect()) {
-        Ok(()) => ExitCode::SUCCESS,
+    match CommandLine::try_parse() {
+        Ok(command) => match run(command) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Err(error) => {
-            eprintln!("error: {error}");
-            ExitCode::FAILURE
+            let exit_code = if error.use_stderr() {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            };
+
+            let _ = error.print();
+            exit_code
         }
     }
 }
 
-fn run(args: Vec<String>) -> Result<(), String> {
-    let command = CommandLine::parse(args)?;
-
-    match command {
-        CommandLine::Prepare(prepare) => prepare.run(),
-        CommandLine::Help => {
-            print_help();
+fn run(command: CommandLine) -> Result<(), String> {
+    match command.command {
+        Some(CommandLineCommand::Prepare(prepare)) => prepare.run(),
+        None => {
+            let mut command = CommandLine::command();
+            command
+                .print_help()
+                .map_err(|error| format!("failed to print help: {error}"))?;
+            println!();
             Ok(())
         }
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-enum CommandLine {
-    Prepare(Prepare),
-    Help,
+#[derive(Debug, Eq, Parser, PartialEq)]
+#[command(version, about)]
+struct CommandLine {
+    #[command(subcommand)]
+    command: Option<CommandLineCommand>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Subcommand)]
+enum CommandLineCommand {
+    Prepare(Prepare),
+}
+
+#[derive(Args, Debug, Eq, PartialEq)]
 struct Prepare {
+    #[arg(short = 'D', long)]
     database_url: Option<String>,
+
+    #[arg(long, default_value = ".sqlx")]
     offline_dir: PathBuf,
+
+    #[arg(last = true, value_name = "CARGO CHECK ARGS")]
     cargo_args: Vec<String>,
 }
 
-impl CommandLine {
-    fn parse(args: Vec<String>) -> Result<Self, String> {
-        let mut args = args.into_iter();
-
-        match args.next().as_deref() {
-            Some("prepare") => Prepare::parse(args.collect()).map(Self::Prepare),
-            Some("-h" | "--help") | None => Ok(Self::Help),
-            Some(command) => Err(format!("unknown command `{command}`")),
-        }
-    }
-}
-
 impl Prepare {
-    fn parse(args: Vec<String>) -> Result<Self, String> {
-        let mut database_url = None;
-        let mut offline_dir = PathBuf::from(".sqlx");
-        let mut cargo_args = Vec::new();
-        let mut args = args.into_iter();
-
-        while let Some(arg) = args.next() {
-            match arg.as_str() {
-                "--" => {
-                    cargo_args.extend(args);
-                    break;
-                }
-                "-D" | "--database-url" => {
-                    database_url = Some(
-                        args.next()
-                            .ok_or_else(|| format!("missing value for `{arg}`"))?,
-                    );
-                }
-                "--offline-dir" => {
-                    offline_dir = PathBuf::from(
-                        args.next()
-                            .ok_or_else(|| format!("missing value for `{arg}`"))?,
-                    );
-                }
-                "-h" | "--help" => return Err("use `sqlx-turso --help` for usage".to_owned()),
-                option if option.starts_with('-') => {
-                    return Err(format!("unknown option `{option}`"));
-                }
-                value => cargo_args.push(value.to_owned()),
-            }
-        }
-
-        Ok(Self {
-            database_url,
-            offline_dir,
-            cargo_args,
-        })
-    }
-
     fn run(self) -> Result<(), String> {
         create_clean_dir(&self.offline_dir).map_err(|error| {
             format!("failed to prepare {}: {error}", self.offline_dir.display())
@@ -114,11 +90,11 @@ impl Prepare {
             .status()
             .map_err(|error| format!("failed to run cargo check: {error}"))?;
 
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("cargo check exited with {status}"))
+        if !status.success() {
+            return Err(format!("cargo check exited with {status}"));
         }
+
+        Ok(())
     }
 }
 
@@ -128,58 +104,4 @@ fn create_clean_dir(path: &Path) -> io::Result<()> {
     }
 
     fs::create_dir_all(path)
-}
-
-fn print_help() {
-    println!(
-        "Usage: sqlx-turso prepare [OPTIONS] [-- <CARGO CHECK ARGS>]\n\n\
-         Options:\n  -D, --database-url <URL>    database URL used by query macros\n      --offline-dir <DIR>     output directory for query metadata, defaults to .sqlx"
-    );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CommandLine, Prepare};
-    use std::path::PathBuf;
-
-    #[test]
-    fn parses_prepare_defaults() {
-        assert_eq!(
-            CommandLine::parse(vec!["prepare".to_owned()]).unwrap(),
-            CommandLine::Prepare(Prepare {
-                database_url: None,
-                offline_dir: PathBuf::from(".sqlx"),
-                cargo_args: Vec::new(),
-            })
-        );
-    }
-
-    #[test]
-    fn parses_prepare_options_and_cargo_args() {
-        assert_eq!(
-            CommandLine::parse(vec![
-                "prepare".to_owned(),
-                "--database-url".to_owned(),
-                "turso::memory:".to_owned(),
-                "--offline-dir".to_owned(),
-                "target/sqlx".to_owned(),
-                "--".to_owned(),
-                "-p".to_owned(),
-                "sqlx-turso".to_owned(),
-                "--features".to_owned(),
-                "macros".to_owned(),
-            ])
-            .unwrap(),
-            CommandLine::Prepare(Prepare {
-                database_url: Some("turso::memory:".to_owned()),
-                offline_dir: PathBuf::from("target/sqlx"),
-                cargo_args: vec![
-                    "-p".to_owned(),
-                    "sqlx-turso".to_owned(),
-                    "--features".to_owned(),
-                    "macros".to_owned(),
-                ],
-            })
-        );
-    }
 }
