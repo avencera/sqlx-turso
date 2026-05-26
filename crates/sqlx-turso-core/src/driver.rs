@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, path::Path};
 
 use sqlx_core::error::Error;
 
@@ -53,7 +53,10 @@ impl TursoDriver {
 
         let path = match options.target() {
             TursoDatabaseTarget::Memory { .. } => ":memory:".to_owned(),
-            TursoDatabaseTarget::File(path) => path.to_string_lossy().into_owned(),
+            TursoDatabaseTarget::File(path) => {
+                Self::validate_file_target(options, path)?;
+                path.to_string_lossy().into_owned()
+            }
         };
 
         let mut builder =
@@ -104,17 +107,22 @@ impl TursoDriver {
         match options.target() {
             TursoDatabaseTarget::Memory { .. } => Self::memory_database(options).await,
             TursoDatabaseTarget::File(path) => {
-                if !options.get_create_if_missing() && !path.exists() {
-                    return Err(Error::Io(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("database file {} does not exist", path.display()),
-                    )));
-                }
-
+                Self::validate_file_target(options, path)?;
                 let path = path.to_string_lossy();
                 Self::build_database(options, &path).await
             }
         }
+    }
+
+    fn validate_file_target(options: &TursoConnectOptions, path: &Path) -> Result<(), Error> {
+        if options.get_create_if_missing() || path.exists() {
+            return Ok(());
+        }
+
+        Err(Error::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("database file {} does not exist", path.display()),
+        )))
     }
 
     fn validate_open_support(options: &TursoConnectOptions) -> Result<(), Error> {

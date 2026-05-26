@@ -1220,6 +1220,28 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "sync")]
+    #[tokio::test]
+    async fn sync_read_write_file_mode_rejects_missing_database() -> sqlx_core::Result<()> {
+        let path =
+            std::env::temp_dir().join(format!("sqlx-turso-sync-missing-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let options = TursoConnectOptions::new()
+            .filename(&path)
+            .with_sync_options(
+                super::TursoSyncOptions::new("http://127.0.0.1:9").with_bootstrap_if_empty(false),
+            );
+        let error = options.connect().await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::Io(ref io_error) if io_error.kind() == std::io::ErrorKind::NotFound
+        ));
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn private_memory_cache_uses_distinct_databases() -> sqlx_core::Result<()> {
         let options = TursoConnectOptions::new()
