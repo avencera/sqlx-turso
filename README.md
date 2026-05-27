@@ -52,21 +52,6 @@ Install the `sqlx-turso` CLI with Cargo:
 cargo install sqlx-turso-cli --version 0.1.0-alpha.1
 ```
 
-## SQLx Any
-
-Enable the `any` feature and install the Turso driver before opening
-`sqlx::Any` connections:
-
-```rust
-sqlx_turso::install_turso_any_driver()?;
-```
-
-`install_turso_any_driver()` installs Turso as the only SQLx `Any` driver and
-is safe to call repeatedly through that helper. Applications that need Turso
-alongside other `Any` drivers must call `sqlx::any::install_drivers()` once with
-`sqlx_turso::TURSO_ANY_DRIVER` plus the other driver constants; SQLx's global
-`Any` registry cannot be changed after a different installer has run.
-
 ## Compile-Time Checked Queries
 
 `sqlx-turso` provides SQLx-style compile-time checked query macros through the
@@ -118,14 +103,18 @@ Supported today:
 - forwarded Turso FTS support
 - local sync-backed execution, checkpoint, and stats APIs
 
-Current limitations:
+Current crate limitations:
 
 - this crate pins `turso = "=0.7.0-pre.3"`
-- bind parameter checking is weak until Turso exposes public parameter metadata
-- read-only and immutable opens are rejected until Turso exposes matching builder options
 - only virtual generated columns are covered; stored generated columns are not supported
-- autovacuum is disabled because Turso exposes `VACUUM` but not the autovacuum builder flag
 - remote sync push/pull is not tested yet; default sync tests run without a server
+
+Blocked by Turso support:
+
+- bind parameter checking is weak until Turso exposes public parameter metadata
+- read-only opens are rejected until Turso exposes `OpenFlags::ReadOnly` through the Rust builder and SDK config; emulating read-only after opening read-write would not provide correct locking or file-access semantics
+- immutable opens are rejected until Turso exposes and documents SQLite-style immutable open semantics through the Rust builder
+- autovacuum is not supported yet. Turso keeps autovacuum behind an experimental opt-in because there are still open correctness issues in that code path, and the pinned Rust builder does not expose an autovacuum opt-in. Regular `VACUUM` is still supported behind `TursoExperimentalFeature::Vacuum`
 - sync connections cannot use custom IO until Turso exposes that hook
 
 See `examples/` for connect, pool, transaction, migration, checked-query, encryption/MVCC, and sync snippets.
