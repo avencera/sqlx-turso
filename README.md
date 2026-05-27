@@ -67,6 +67,7 @@ sqlx-turso = { version = "0.1.0-alpha.1", features = ["macros"] }
 let row = sqlx_turso::query!("SELECT 1 AS \"id!: i64\"")
     .fetch_one(&mut conn)
     .await?;
+
 assert_eq!(row.id, 1);
 ```
 
