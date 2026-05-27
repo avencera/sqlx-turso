@@ -4,7 +4,7 @@ use sqlx_core::error::Error;
 
 use crate::{
     TursoDatabaseTarget, TursoExperimentalFeature, TursoSyncOptions,
-    error::{TursoDatabaseError, unsupported_sqlx},
+    error::{TursoDatabaseError, unsupported_autovacuum, unsupported_sqlx},
     options::TursoConnectOptions,
 };
 
@@ -20,6 +20,8 @@ impl TursoDriver {
     pub(crate) async fn connect(
         options: &TursoConnectOptions,
     ) -> Result<TursoDriverConnection, Error> {
+        Self::validate_pragmas(options)?;
+
         if let Some(sync) = options.sync_options() {
             return Self::connect_sync(options, sync).await;
         }
@@ -132,6 +134,18 @@ impl TursoDriver {
 
         if options.get_immutable() {
             return Err(unsupported_sqlx("immutable Turso connections"));
+        }
+
+        Ok(())
+    }
+
+    fn validate_pragmas(options: &TursoConnectOptions) -> Result<(), Error> {
+        if options
+            .pragmas()
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("auto_vacuum") && value.is_some())
+        {
+            return Err(unsupported_autovacuum());
         }
 
         Ok(())

@@ -36,6 +36,13 @@ pub(crate) fn unsupported_sqlx(surface: impl Into<String>) -> sqlx_core::error::
     sqlx_core::error::Error::Configuration(Box::new(error))
 }
 
+pub(crate) fn unsupported_autovacuum() -> sqlx_core::error::Error {
+    sqlx_core::error::Error::Configuration(
+        "PRAGMA auto_vacuum is not supported by sqlx-turso yet. Turso keeps autovacuum behind an experimental opt-in because there are still open correctness issues in that code path, and the pinned Rust builder does not expose an autovacuum opt-in. Regular VACUUM is still supported behind TursoExperimentalFeature::Vacuum"
+            .into(),
+    )
+}
+
 /// Database error returned by the Turso engine
 #[derive(Debug)]
 pub struct TursoDatabaseError {

@@ -15,7 +15,7 @@ use sqlx_core::{
 };
 use url::Url;
 
-use crate::{connection::TursoConnection, driver::TursoDriver};
+use crate::{connection::TursoConnection, driver::TursoDriver, error::unsupported_autovacuum};
 
 const DEFAULT_STATEMENT_CACHE_CAPACITY: usize = 100;
 const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -650,6 +650,9 @@ impl TursoConnectOptions {
                         self = self.pragma("journal_mode", Some(value.into_owned()));
                     }
                 }
+                "auto_vacuum" => {
+                    return Err(unsupported_autovacuum());
+                }
                 "experimental" => {
                     for feature in value.split(',').filter(|feature| !feature.is_empty()) {
                         self =
@@ -1122,6 +1125,17 @@ mod tests {
         assert!(TursoConnectOptions::from_str("turso://data.db?experimental=bad").is_err());
         assert!(
             TursoConnectOptions::from_str("turso://data.db?encryption_hexkey=not-hex").is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_autovacuum_query_parameter_with_adapter_error() {
+        let error = TursoConnectOptions::from_str("turso://data.db?auto_vacuum=FULL")
+            .expect_err("auto_vacuum should be rejected during URL parsing");
+        assert!(
+            error
+                .to_string()
+                .contains("PRAGMA auto_vacuum is not supported by sqlx-turso yet")
         );
     }
 

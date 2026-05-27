@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_autovacuum_until_builder_exposes_flag() {
+    async fn rejects_autovacuum_with_adapter_configuration_error() {
         let path =
             std::env::temp_dir().join(format!("sqlx-turso-autovacuum-{}.db", std::process::id()));
         remove_database_sidecars(&path);
@@ -192,11 +192,16 @@ mod tests {
             .experimental_feature(TursoExperimentalFeature::Vacuum, true)
             .connect()
             .await
-            .expect_err("autovacuum should stay blocked until pinned Turso exposes the flag");
+            .expect_err("autovacuum should be rejected before Turso connection setup");
         assert!(
             error
                 .to_string()
-                .contains("Autovacuum is not enabled. Use --experimental-autovacuum flag")
+                .contains("PRAGMA auto_vacuum is not supported by sqlx-turso yet")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("Regular VACUUM is still supported")
         );
 
         remove_database_sidecars(&path);
