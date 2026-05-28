@@ -81,8 +81,10 @@ Supported checked macro entry points:
 - `sqlx_turso::query_file_scalar!`
 
 Output column typing is checked from describe metadata, and SQLx-style column
-overrides such as `"id!: i64"` are supported. Bind parameter checking is weak
-because Turso describe metadata does not expose public parameter metadata.
+overrides such as `"id!: i64"` are supported. Bind arity checking is currently
+unavailable because Turso's public Rust `Statement` does not expose parameter
+metadata. Strong bind type checking remains weak by design because Turso and
+SQLite parameters are dynamically typed.
 
 Offline metadata is stored in `.sqlx/query-*.json`.
 Stock `cargo sqlx prepare` does not know the `turso:` URL scheme. Use the wrapper instead:
@@ -112,7 +114,7 @@ Current crate limitations:
 
 Blocked by Turso support:
 
-- bind parameter checking is weak until Turso exposes public parameter metadata
+- bind arity checking is unavailable until Turso exposes public Rust statement parameter metadata; strong bind type checking remains weak by design
 - read-only opens are rejected until Turso exposes `OpenFlags::ReadOnly` through the Rust builder and SDK config; emulating read-only after opening read-write would not provide correct locking or file-access semantics
 - immutable opens are rejected until Turso exposes and documents SQLite-style immutable open semantics through the Rust builder
 - autovacuum is not supported yet. Turso keeps autovacuum behind an experimental opt-in because there are still open correctness issues in that code path, and the pinned Rust builder does not expose an autovacuum opt-in. Regular `VACUUM` is still supported behind `TursoExperimentalFeature::Vacuum`
